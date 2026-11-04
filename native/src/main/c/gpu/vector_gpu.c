@@ -42,6 +42,14 @@ typedef struct {
 } Params;
 
 typedef struct {
+    WGPUShaderModule shader;
+    WGPUPipelineLayout pipeline_layout;
+    WGPUComputePipeline pipeline;
+    WGPUBindGroupLayout layout;
+    WGPUBuffer params;
+} ScaleRuntime;
+
+typedef struct {
     uint32_t rows;
     uint32_t head_size;
     uint32_t number_of_heads;
@@ -128,6 +136,12 @@ void work_done_callback(WGPUQueueWorkDoneStatus status, void *userdata1, void *u
         fprintf(stderr, "Work done failed with status: %d\n", status);
         exit(4);
     }
+}
+
+static void scale_work_done_callback(WGPUQueueWorkDoneStatus status, void *userdata1, void *userdata2) {
+    UNUSED(status)
+    UNUSED(userdata2)
+    *(bool *) userdata1 = true;
 }
 
 static void shader_compilation_callback(WGPUCompilationInfoRequestStatus status, struct WGPUCompilationInfo const* compilationInfo, void* userdata1, void* userdata2)
@@ -365,6 +379,144 @@ WGPUComputePipeline init_pipeline(WGPUShaderModule shader_module) {
     return pipeline;
 }
 
+WGPUShaderModule create_shader_module(WGPUDevice device, const char* shader_code, size_t shader_size);
+WGPUBuffer create_working_buffer(WGPUDevice device, char const *label, size_t size, WGPUBufferUsage usage);
+
+int64_t tensor2_register_scale_shader(const char *data, int size) {
+    WGPUShaderModule shader = create_shader_module(device, data, (size_t) size);
+    if (shader == NULL || has_errored) {
+        return -1;
+    }
+
+    WGPUBindGroupLayoutEntry entries[2] = {
+        { .binding = 0, .visibility = WGPUShaderStage_Compute,
+          .buffer = { .type = WGPUBufferBindingType_Storage } },
+        { .binding = 1, .visibility = WGPUShaderStage_Compute,
+          .buffer = { .type = WGPUBufferBindingType_Uniform } }
+    };
+    WGPUBindGroupLayout layout = wgpuDeviceCreateBindGroupLayout(device, &(WGPUBindGroupLayoutDescriptor){
+        .entryCount = 2,
+        .entries = entries
+    });
+    WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(device, &(WGPUPipelineLayoutDescriptor){
+        .bindGroupLayoutCount = 1,
+        .bindGroupLayouts = &layout
+    });
+    WGPUComputePipeline pipeline = wgpuDeviceCreateComputePipeline(device, &(WGPUComputePipelineDescriptor){
+        .layout = pipelineLayout,
+        .compute = {
+            .module = shader,
+            .entryPoint = { .data = "main", .length = 4 }
+        }
+    });
+    WGPUBuffer params = create_working_buffer(device, "scale_params", 16,
+            WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+    if (pipeline == NULL || params == NULL) {
+        if (params != NULL) {
+            wgpuBufferDestroy(params);
+            wgpuBufferRelease(params);
+        }
+        if (pipeline != NULL) {
+            wgpuComputePipelineRelease(pipeline);
+        }
+        if (pipelineLayout != NULL) {
+            wgpuPipelineLayoutRelease(pipelineLayout);
+        }
+        if (layout != NULL) {
+            wgpuBindGroupLayoutRelease(layout);
+        }
+        if (shader != NULL) {
+            wgpuShaderModuleRelease(shader);
+        }
+        return -1;
+    }
+    ScaleRuntime *runtime = calloc(1, sizeof(ScaleRuntime));
+    if (runtime == NULL) {
+        wgpuBufferDestroy(params);
+        wgpuBufferRelease(params);
+        wgpuComputePipelineRelease(pipeline);
+        wgpuPipelineLayoutRelease(pipelineLayout);
+        wgpuBindGroupLayoutRelease(layout);
+        wgpuShaderModuleRelease(shader);
+        return -1;
+    }
+    runtime->shader = shader;
+    runtime->pipeline_layout = pipelineLayout;
+    runtime->pipeline = pipeline;
+    runtime->layout = layout;
+    runtime->params = params;
+    return (int64_t) runtime;
+}
+
+void tensor2_free_scale_shader(int64_t id) {
+    ScaleRuntime *runtime = (ScaleRuntime *) id;
+    if (runtime == NULL) {
+        return;
+    }
+    wgpuBufferDestroy(runtime->params);
+    wgpuBufferRelease(runtime->params);
+    wgpuComputePipelineRelease(runtime->pipeline);
+    wgpuPipelineLayoutRelease(runtime->pipeline_layout);
+    wgpuBindGroupLayoutRelease(runtime->layout);
+    wgpuShaderModuleRelease(runtime->shader);
+    free(runtime);
+}
+
+void tensor2_gpu_scale_f32_device(int64_t id, int64_t tensor, float factor, int offset, int length,
+        int rows, int columns) {
+    ScaleRuntime *runtime = (ScaleRuntime *) id;
+    if (runtime == NULL || tensor == 0 || offset < 0 || length <= 0 || rows <= 0 || columns <= 0
+            || offset > columns || length > columns - offset) {
+        return;
+    }
+    struct {
+        float factor;
+        uint32_t offset;
+        uint32_t length;
+        uint32_t columns;
+    } params = { factor, (uint32_t) offset, (uint32_t) length, (uint32_t) columns };
+    wgpuQueueWriteBuffer(queue, runtime->params, 0, &params, sizeof(params));
+    WGPUBindGroupEntry bindings[2] = {
+        { .binding = 0, .buffer = (WGPUBuffer) tensor, .offset = 0, .size = WGPU_WHOLE_SIZE },
+        { .binding = 1, .buffer = runtime->params, .offset = 0, .size = 16 }
+    };
+    WGPUBindGroup bindGroup = wgpuDeviceCreateBindGroup(device, &(WGPUBindGroupDescriptor){
+        .layout = runtime->layout,
+        .entryCount = 2,
+        .entries = bindings
+    });
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, &(const WGPUCommandEncoderDescriptor){
+        .label = "scale_f32"
+    });
+    WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(encoder, &(const WGPUComputePassDescriptor){
+        .label = "scale_f32_pass"
+    });
+    wgpuComputePassEncoderSetPipeline(pass, runtime->pipeline);
+    wgpuComputePassEncoderSetBindGroup(pass, 0, bindGroup, 0, NULL);
+    uint64_t elements = (uint64_t) rows * (uint64_t) length;
+    wgpuComputePassEncoderDispatchWorkgroups(pass, (uint32_t) ((elements + 255) / 256), 1, 1);
+    wgpuComputePassEncoderEnd(pass);
+    wgpuComputePassEncoderRelease(pass);
+    WGPUCommandBuffer command = wgpuCommandEncoderFinish(encoder, &(const WGPUCommandBufferDescriptor){
+        .label = "scale_f32_command"
+    });
+    wgpuQueueSubmit(queue, 1, &command);
+
+    bool complete = false;
+    WGPUQueueWorkDoneCallbackInfo callback = {
+        .mode = WGPUCallbackMode_AllowSpontaneous,
+        .callback = scale_work_done_callback,
+        .userdata1 = &complete
+    };
+    wgpuQueueOnSubmittedWorkDone(queue, callback);
+    while (!complete) {
+        wgpuInstanceProcessEvents(instance);
+    }
+    wgpuCommandBufferRelease(command);
+    wgpuCommandEncoderRelease(encoder);
+    wgpuBindGroupRelease(bindGroup);
+}
+
 void on_error_scope(WGPUPopErrorScopeStatus status,  WGPUErrorType type,  struct WGPUStringView message,  void *userdata1, void *userdata2) {
     bool *oom_flag = (bool*)userdata1;
     if (type == WGPUErrorType_OutOfMemory) {
@@ -450,7 +602,7 @@ int64_t allocate_gpu_buffer(int size, int zero) {
         return -1;
     }
     WGPUBuffer buffer = create_working_buffer(device, "tensor2_dense", (size_t) size,
-            WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst);
+            WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst);
     if (buffer == NULL) {
         return -1;
     }
@@ -476,6 +628,98 @@ void free_gpu_buffer(int64_t id) {
     WGPUBuffer buffer = (WGPUBuffer) id;
     wgpuBufferDestroy(buffer);
     wgpuBufferRelease(buffer);
+}
+
+void upload_gpu_buffer(int64_t id, const void *data, int size) {
+    if (id == 0 || data == NULL || size <= 0) {
+        return;
+    }
+    wgpuQueueWriteBuffer(queue, (WGPUBuffer) id, 0, data, (size_t) size);
+}
+
+typedef struct {
+    WGPUBuffer staging;
+    void *destination;
+    size_t size;
+    bool complete;
+    bool success;
+} DownloadContext;
+
+static void download_map_callback(WGPUMapAsyncStatus status, WGPUStringView message,
+        void *userdata1, void *userdata2) {
+    UNUSED(message)
+    UNUSED(userdata2)
+    DownloadContext *context = (DownloadContext *) userdata1;
+    context->success = status == WGPUMapAsyncStatus_Success;
+    if (context->success) {
+        void const *mapped = wgpuBufferGetConstMappedRange(context->staging, 0, context->size);
+        if (mapped == NULL) {
+            context->success = false;
+        } else {
+            memcpy(context->destination, mapped, context->size);
+        }
+        wgpuBufferUnmap(context->staging);
+    }
+    context->complete = true;
+}
+
+static void download_work_done_callback(WGPUQueueWorkDoneStatus status,
+        void *userdata1, void *userdata2) {
+    UNUSED(userdata2)
+    DownloadContext *context = (DownloadContext *) userdata1;
+    if (status != WGPUQueueWorkDoneStatus_Success) {
+        context->complete = true;
+        context->success = false;
+        return;
+    }
+    WGPUBufferMapCallbackInfo callback = {
+        .mode = WGPUCallbackMode_AllowSpontaneous,
+        .callback = download_map_callback,
+        .userdata1 = context
+    };
+    wgpuBufferMapAsync(context->staging, WGPUMapMode_Read, 0, context->size, callback);
+}
+
+int download_gpu_buffer(int64_t id, void *destination, int size) {
+    if (id == 0 || destination == NULL || size <= 0) {
+        return -1;
+    }
+    WGPUBuffer staging = create_working_buffer(device, "tensor2_readback", (size_t) size,
+            WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+    if (staging == NULL) {
+        return -1;
+    }
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, &(const WGPUCommandEncoderDescriptor){
+            .label = "tensor2_readback_encoder"
+    });
+    wgpuCommandEncoderCopyBufferToBuffer(encoder, (WGPUBuffer) id, 0, staging, 0, (size_t) size);
+    WGPUCommandBuffer command = wgpuCommandEncoderFinish(encoder, &(const WGPUCommandBufferDescriptor){
+            .label = "tensor2_readback_command"
+    });
+    wgpuQueueSubmit(queue, 1, &command);
+
+    DownloadContext context = {
+        .staging = staging,
+        .destination = destination,
+        .size = (size_t) size,
+        .complete = false,
+        .success = false
+    };
+    WGPUQueueWorkDoneCallbackInfo callback = {
+        .mode = WGPUCallbackMode_AllowSpontaneous,
+        .callback = download_work_done_callback,
+        .userdata1 = &context
+    };
+    wgpuQueueOnSubmittedWorkDone(queue, callback);
+    while (!context.complete) {
+        wgpuInstanceProcessEvents(instance);
+    }
+
+    wgpuCommandBufferRelease(command);
+    wgpuCommandEncoderRelease(encoder);
+    wgpuBufferDestroy(staging);
+    wgpuBufferRelease(staging);
+    return context.success ? 0 : -1;
 }
 
 void unregister_tensor(int64_t id) {
@@ -598,14 +842,14 @@ void unregister_scratch_buffers(int64_t id) {
     }
 }
 
-WGPUShaderModule create_shader_module(WGPUDevice device, const char* shader_code) {
+WGPUShaderModule create_shader_module(WGPUDevice device, const char* shader_code, size_t shader_size) {
 
     // Explicitly initialize the chained WGSL descriptor.
     WGPUShaderModuleWGSLDescriptor wgslDesc;
     wgslDesc.chain.sType = WGPUSType_ShaderSourceWGSL; // Expected to be non-zero (e.g. 2)
     wgslDesc.chain.next  = NULL;
     wgslDesc.code.data   = shader_code;
-    wgslDesc.code.length = strlen(shader_code);
+    wgslDesc.code.length = shader_size;
 
     WGPUShaderModuleDescriptor shaderDesc = {
         .label       = "shader",
@@ -639,7 +883,7 @@ int64_t register_shader(const char *data, int size) {
 
     assert(shader_lookup_idx < 1024);
 
-    WGPUShaderModule shader = create_shader_module(device, data);
+    WGPUShaderModule shader = create_shader_module(device, data, (size_t) size);
 
     if (has_errored) {
         return -1;
@@ -816,6 +1060,115 @@ void gpu_gemm(int64_t scratch_id, int64_t shader, const void *a, const void *a2,
 
     release_tensor(B_buffer);
     release_tensor(B2_registered_buffer);
+}
+
+void tensor2_gpu_batch_dot_i8_q4(int64_t scratch_id, int64_t shader, const void *a, const void *a2,
+        int aoffset, int alimit, int64_t bid, int64_t bid2, int boffset, int blimit, float *r,
+        int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc) {
+    gpu_gemm(scratch_id, shader, a, a2, aoffset, alimit, bid, bid2, boffset, blimit, r,
+            roffset, rlimit, m, n0, n, k, lda, ldb, ldc, 0);
+}
+
+void tensor2_gpu_batch_dot_f32_q4(int64_t scratch_id, int64_t shader, const void *a, int aoffset, int alimit,
+        int64_t bid, int64_t bid2, int boffset, int blimit, float *r, int roffset, int rlimit,
+        int m, int n0, int n, int k, int lda, int ldb, int ldc) {
+    gpu_gemm(scratch_id, shader, a, NULL, aoffset, alimit, bid, bid2, boffset, blimit, r,
+            roffset, rlimit, m, n0, n, k, lda, ldb, ldc, 0);
+}
+
+static void tensor2_gpu_batch_dot_device(int64_t scratch_id, int64_t shader, int64_t aid, int64_t a2id,
+        int aoffset, int alimit, int64_t bid, int64_t bid2, int boffset, int blimit, int64_t rid,
+        int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc) {
+    if (scratch_id < 0 || shader < 0 || aid == 0 || bid == 0 || bid2 == 0 || rid == 0
+            || aoffset < 0 || alimit <= aoffset || boffset < 0 || blimit <= boffset
+            || m <= 0 || n <= 0 || k <= 0 || lda <= 0 || ldb <= 0 || ldc <= 0) {
+        return;
+    }
+    Scratch s = scratch_lookup[scratch_id];
+    size_t A_size = (size_t) (alimit - aoffset);
+    size_t A2_size = a2id == 0 ? 8 : (A_size * 4) / Q8_BLOCK_SIZE;
+    size_t A2_offset = a2id == 0 ? 0 : ((size_t) aoffset * 4) / Q8_BLOCK_SIZE;
+    size_t B_size = (size_t) (blimit - boffset);
+    size_t B2_size = (B_size * 2 * 4) / Q4_BLOCK_SIZE;
+    size_t B2_offset = ((size_t) boffset * 2 * 4) / Q4_BLOCK_SIZE;
+    size_t result_size = ((size_t) (m - 1) * (size_t) ldc + (size_t) n) * sizeof(float);
+    if (A_size > MAX_SCRATCH_SIZE || A2_size > MAX_SCRATCH_SIZE || result_size > MAX_SCRATCH_SIZE
+            || result_size > (size_t) rlimit || result_size == 0) {
+        return;
+    }
+
+    WGPUBuffer A = s.input_buffer;
+    WGPUBuffer A2 = a2id == 0 ? s.empty_buffer : s.input2_buffer;
+    WGPUBuffer B = (WGPUBuffer) bid;
+    WGPUBuffer B2 = (WGPUBuffer) bid2;
+    WGPUBuffer R = s.result_buffer;
+    WGPUBuffer output = (WGPUBuffer) rid;
+    size_t alignedBOffset = (size_t) boffset & ~(storageAlign - 1);
+    size_t alignedB2Offset = B2_offset & ~(storageAlign - 1);
+    uint32_t bSub = (uint32_t) ((size_t) boffset - alignedBOffset);
+    uint32_t b2Sub = (uint32_t) (B2_offset - alignedB2Offset);
+    size_t alignedBSize = (B_size + bSub + 3) & ~3u;
+    size_t alignedB2Size = (B2_size + b2Sub + 3) & ~3u;
+    Params params = {(uint32_t) m, (uint32_t) n, (uint32_t) k, (uint32_t) lda, (uint32_t) ldb,
+            (uint32_t) ldc, bSub, b2Sub};
+    wgpuQueueWriteBuffer(queue, s.params_buffer, 0, &params, sizeof(params));
+
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, &(const WGPUCommandEncoderDescriptor){
+            .label = "tensor2_device_command_encoder"});
+    wgpuCommandEncoderCopyBufferToBuffer(encoder, (WGPUBuffer) aid, (size_t) aoffset, A, 0, A_size);
+    if (a2id != 0) {
+        wgpuCommandEncoderCopyBufferToBuffer(encoder, (WGPUBuffer) a2id, A2_offset, A2, 0, A2_size);
+    }
+    WGPUBindGroupEntry entries[6] = {
+        {.binding = 0, .buffer = A, .offset = 0, .size = A_size},
+        {.binding = 1, .buffer = A2, .offset = 0, .size = A2_size},
+        {.binding = 2, .buffer = B, .offset = alignedBOffset, .size = alignedBSize},
+        {.binding = 3, .buffer = B2, .offset = alignedB2Offset, .size = alignedB2Size},
+        {.binding = 4, .buffer = R, .offset = 0, .size = result_size},
+        {.binding = 5, .buffer = s.params_buffer, .offset = 0, .size = sizeof(Params)}
+    };
+    WGPUBindGroup bindGroup = wgpuDeviceCreateBindGroup(device, &(WGPUBindGroupDescriptor){
+            .layout = bind_group_layout, .entryCount = 6, .entries = entries});
+    WGPUComputePassEncoder pass = wgpuCommandEncoderBeginComputePass(encoder, &(const WGPUComputePassDescriptor){
+            .label = "tensor2_device_compute_pass"});
+    wgpuComputePassEncoderSetPipeline(pass, shader_pipeline_lookup[shader]);
+    wgpuComputePassEncoderSetBindGroup(pass, 0, bindGroup, 0, NULL);
+    wgpuComputePassEncoderDispatchWorkgroups(pass, (n + RN - 1) / RN, (m + RM - 1) / RM, 1);
+    wgpuComputePassEncoderEnd(pass);
+    wgpuComputePassEncoderRelease(pass);
+    for (int row = 0; row < m; row++) {
+        int64_t destination_elements = (int64_t) row * ldc + n0 - roffset;
+        if (destination_elements < 0
+                || (uint64_t) destination_elements * sizeof(float) + (size_t) n * sizeof(float)
+                        > (size_t) rlimit) {
+            wgpuBindGroupRelease(bindGroup);
+            wgpuCommandEncoderRelease(encoder);
+            return;
+        }
+        size_t destination = (size_t) destination_elements * sizeof(float);
+        wgpuCommandEncoderCopyBufferToBuffer(encoder, R, (size_t) row * (size_t) ldc * sizeof(float),
+                output, destination, (size_t) n * sizeof(float));
+    }
+    WGPUCommandBuffer command = wgpuCommandEncoderFinish(encoder, &(const WGPUCommandBufferDescriptor){
+            .label = "tensor2_device_command"});
+    wgpuQueueSubmit(queue, 1, &command);
+    wgpuCommandBufferRelease(command);
+    wgpuBindGroupRelease(bindGroup);
+    wgpuCommandEncoderRelease(encoder);
+}
+
+void tensor2_gpu_batch_dot_i8_q4_device(int64_t scratch_id, int64_t shader, int64_t a, int64_t a2,
+        int aoffset, int alimit, int64_t bid, int64_t bid2, int boffset, int blimit, int64_t r,
+        int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc) {
+    tensor2_gpu_batch_dot_device(scratch_id, shader, a, a2, aoffset, alimit, bid, bid2, boffset, blimit,
+            r, roffset, rlimit, m, n0, n, k, lda, ldb, ldc);
+}
+
+void tensor2_gpu_batch_dot_f32_q4_device(int64_t scratch_id, int64_t shader, int64_t a, int64_t a2,
+        int aoffset, int alimit, int64_t bid, int64_t bid2, int boffset, int blimit, int64_t r,
+        int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc) {
+    tensor2_gpu_batch_dot_device(scratch_id, shader, a, a2, aoffset, alimit, bid, bid2, boffset, blimit,
+            r, roffset, rlimit, m, n0, n, k, lda, ldb, ldc);
 }
 
 void gpu_gemm_batch(int64_t scratch_id, int64_t shader, int batch_num, const void *a, const void *a2, int aoffset, int alimit, const int64_t *bid, const int64_t *bid2, int boffset, int blimit, float **r, int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc, int m1_optimized) {

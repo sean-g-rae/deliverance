@@ -15,6 +15,15 @@ int64_t allocate_gpu_buffer(int size, int zero);
 
 void free_gpu_buffer(int64_t id);
 
+void upload_gpu_buffer(int64_t id, const void *data, int size);
+
+int download_gpu_buffer(int64_t id, void *destination, int size);
+
+int64_t tensor2_register_scale_shader(const char *data, int size);
+void tensor2_free_scale_shader(int64_t id);
+void tensor2_gpu_scale_f32_device(int64_t shader, int64_t tensor, float factor, int offset, int length,
+        int rows, int columns);
+
 int64_t register_scratch_buffers(int params_size, int input_size, int result_size);
 
 void unregister_scratch_buffers(int64_t id);
@@ -24,6 +33,20 @@ int64_t register_shader(const char *data, int size);
 
 //GEMM F32/BF16/Q4
 void gpu_gemm(int64_t scratch_id, int64_t shader, const void *a, const void *a2, int aoffset, int alimit, int64_t bid, int64_t bid2, int boffset, int blimit, float *r, int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc, int m1_optimized);
+// Tensor2 ABI: offsets are byte offsets into the supplied host TensorRef views; row/column offsets are
+// resolved by the caller so TensorRef sparse and sidecar layouts cannot be inferred from legacy tensors.
+void tensor2_gpu_batch_dot_i8_q4(int64_t scratch_id, int64_t shader, const void *a, const void *a2,
+        int aoffset, int alimit, int64_t bid, int64_t bid2, int boffset, int blimit, float *r,
+        int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc);
+void tensor2_gpu_batch_dot_f32_q4(int64_t scratch_id, int64_t shader, const void *a, int aoffset, int alimit,
+        int64_t bid, int64_t bid2, int boffset, int blimit, float *r, int roffset, int rlimit,
+        int m, int n0, int n, int k, int lda, int ldb, int ldc);
+void tensor2_gpu_batch_dot_i8_q4_device(int64_t scratch_id, int64_t shader, int64_t a, int64_t a2,
+        int aoffset, int alimit, int64_t bid, int64_t bid2, int boffset, int blimit, int64_t r,
+        int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc);
+void tensor2_gpu_batch_dot_f32_q4_device(int64_t scratch_id, int64_t shader, int64_t a, int64_t a2,
+        int aoffset, int alimit, int64_t bid, int64_t bid2, int boffset, int blimit, int64_t r,
+        int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc);
 void gpu_gemm_batch(int64_t scratch_id, int64_t shader, int batch_num, const void *a, const void *a2, int aoffset, int alimit, const int64_t *bid, const int64_t *bid2, int boffset, int blimit, float **r, int roffset, int rlimit, int m, int n0, int n, int k, int lda, int ldb, int ldc, int m1_optimized);
 void gpu_decode_paged_attention_head(int64_t scratch_id, int64_t shader, const void *query, int qoffset, const int64_t *kid, const int64_t *vid, int page_count, int visible_rows, int page_rows, int head_size, int kv_offset, int key_stride, int value_stride, float *out, int out_offset, int out_stride, float scale, int key_buffer_size, int value_buffer_size);
 void gpu_decode_attention_packed_head(int64_t scratch_id, int64_t shader, const void *query, int qoffset, const void *key, int key_size, const void *value, int value_size, float *out, int out_offset, int visible_rows, int head_size, float scale);
