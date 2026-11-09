@@ -145,6 +145,7 @@ public class AutoModelForCausaLm {
         private Optional<Integer> groupedDecodeQkvSplitSize = Optional.empty();
         private AbstractModel.InferenceType requestedInferenceType = AbstractModel.InferenceType.FULL_GENERATION;
         private Lighter lighter;
+        private DeadReckoningParams deadReckoningParams;
 
         record QuantizeOnDemand(DType targetType, String outputOwner, String outputModel) {
             QuantizeOnDemand {
@@ -159,6 +160,11 @@ public class AutoModelForCausaLm {
 
         public Builder(ModelFetcher fetch){
             this.fetch = fetch;
+        }
+
+        public Builder withDeadReckoning(DeadReckoningParams params) {
+            this.deadReckoningParams = Objects.requireNonNull(params, "params");
+            return this;
         }
 
         public Builder withMetricRegistry(MetricRegistry metricRegistry){
@@ -573,17 +579,21 @@ public class AutoModelForCausaLm {
         protected AbstractModel loadLocalTransformerModel(){
             validatePrefixCacheSettingsForModel();
             System.setProperty("jdk.incubator.vector.VECTOR_ACCESS_OOB_CHECK", this.oobCheck);
-            ModelFetcher fetcherForLoad = resolveModelFetcherForLoad();
-            File modelRoot = fetcherForLoad.maybeDownload();
             if (pool == null){
                 pool = new WrappedForkJoinPool(WrappedForkJoinPool.autoSizeByCores());
             }
+            if (lighter == null) {
+                lighter = new Lighter(mr, pool.getUnderlying());
+            }
+            ModelFetcher fetcherForLoad = resolveModelFetcherForLoad();
+            File modelRoot = fetcherForLoad.maybeDownload();
             String modelType = readModelType(new File(modelRoot, "config.json"));
-            lighter = new Lighter(mr, pool.getUnderlying());
             Optional<LoraAdapter> loraAdapter = loraAdapterFetcher == null
                     ? Optional.empty()
                     : Optional.of(LoraAdapter.fromPretrained(loraAdapterFetcher, mr));
+            loraAdapter.ifPresent(adapter -> adapter.setLighter(lighter));
             AbstractModel model = constructModel(modelRoot, loraAdapter);
+            model.configureDeadReckoning(deadReckoningParams, fetch.owner(), fetch.name());
             model.getLighter().allowDirtyTensors(allowDirtyTensors);
             model.setMaxPrefillBatchSize(maxPrefillBatchSize);
             model.setGpuPrefillEnabled(gpuPrefill);
@@ -721,7 +731,7 @@ public class AutoModelForCausaLm {
                 PreTrainedTokenizer tokenizer = AutoTokenizer.fromPretrained(modelRoot.toPath());
                 WeightLoader weightLoader = new DefaultWeightLoader(modelRoot);
                 if (loraAdapter.isPresent()) {
-                    throw new IllegalArgumentException("LoRA merging is not supported by the TensorRef path");
+                    weightLoader = new MergingWeightLoader(weightLoader, loraAdapter.get(), lighter);
                 }
                 return newModel(modelType, inferenceType(), config, weightLoader, tokenizer);
             } catch (IOException e) {
@@ -850,6 +860,12 @@ public class AutoModelForCausaLm {
             if (quantizeOnDemand.isEmpty()) {
                 return fetch;
             }
+            if (lighter == null) {
+                if (pool == null) {
+                    pool = new WrappedForkJoinPool(WrappedForkJoinPool.autoSizeByCores());
+                }
+                lighter = new Lighter(mr, pool.getUnderlying());
+            }
             QuantizeOnDemand quantize = quantizeOnDemand.get();
             ModelFetcher target = cachePeerFetcher(quantize.outputOwner(), quantize.outputModel()).withDownload(false);
             if (isLocallyComplete(target)) {
@@ -867,7 +883,7 @@ public class AutoModelForCausaLm {
             try {
                 Files.createDirectories(targetDir.getParent());
                 LOGGER.info("Creating quantized model target {} via staging directory {}", targetDir, stagingDir);
-                new ModelQuantizer().quantizeModelDirectory(sourceDir, stagingDir, quantize.targetType(),
+                new ModelQuantizer(lighter).quantizeModelDirectory(sourceDir, stagingDir, quantize.targetType(),
                         ModelQuantizer.DEFAULT_Q4_TENSOR_FILTER);
                 Files.move(stagingDir, targetDir);
                 LOGGER.info("Installed quantized model target {}", targetDir);

@@ -1,6 +1,5 @@
 package io.teknek.reckoning.tensor.kv;
 
-import io.teknek.reckoning.tensor.AbstractTensor;
 import io.teknek.reckoning.tensor2.TensorRef;
 
 /** Explicit write cursor for KV cache updates. */
@@ -12,13 +11,6 @@ public final class KvWriteCursor implements AutoCloseable {
     KvWriteCursor(KvCacheSession session, CacheExecutionMode mode) {
         this.session = session;
         this.mode = mode;
-    }
-
-    public void write(int layer, int position, AbstractTensor key, AbstractTensor value) {
-        if (closed) {
-            throw new IllegalStateException("KV write cursor is closed");
-        }
-        session.write(mode, layer, position, key, value);
     }
 
     public void write(int layer, int position, TensorRef key, TensorRef value) {

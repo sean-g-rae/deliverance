@@ -81,7 +81,7 @@ import static io.teknek.reckoning.tensor.DebugSupport.debug;
  * Base implementation for generation, classification, embedding, and shared model utilities.
  *
  * <h2>Prefix KV-cache contract</h2>
- * <p>Generation can reuse block-aligned KV prefixes through {@link KvBufferCache}. The cache is an internal
+ * <p>Generation can reuse block-aligned KV prefixes through KVCache2. The cache is an internal
  * performance path: it avoids recomputing already-seen prompt prefixes, then runs any uncached suffix tokens and
  * begins decoding after the full prompt length. The position invariant is strict: cache hits must not change the
  * decode start position or the token budget. For example, with an 8-token cached prefix and a 9-token prompt, the
@@ -150,8 +150,7 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
             int[] promptTokens,
             int prefixLength,
             int startPos,
-            int tokensToProcessLength,
-            KvBufferCache.KvBuffer kvBuffer
+            int tokensToProcessLength
     ) {
     }
 
@@ -159,7 +158,7 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
             int layerIndex,
             String stage,
             TensorParallelContext tensorParallelContext,
-            AbstractTensor hiddenStates
+            TensorRef hiddenStates
     ) {
     }
 
@@ -210,7 +209,6 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     protected EmbedInput embedInput;
     protected SampleOutputRef sampleOutputRef;
     protected io.teknek.reckoning.generator2.TransformerBlock2[] transformerBlocks2;
-    protected KvBufferCache kvBufferCache;
     protected KvCacheManager kvCacheManager;
     protected KvPrefixSnapshotCache kvPrefixSnapshotCache;
     protected KvBlockManager kvBlockManager;
@@ -243,7 +241,6 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     private final Queue<ModelLineageEntry> modelLineageEntries = new ConcurrentLinkedQueue<>();
     private final Queue<TensorRef> modelTensorRefs = new ConcurrentLinkedQueue<>();
     private final Set<TensorRef> registeredModelTensorRefSet = ConcurrentHashMap.newKeySet();
-    private final Map<KvBufferCache.KvBuffer, KvCacheSession> kvCache2SessionAdapters = Collections.synchronizedMap(new WeakHashMap<>());
     private Optional<TensorRuntimeMode> tensorRuntimeMode = Optional.empty();
     private TensorRuntime tensorRuntime;
     private Map<String, Object> generationOptions = Map.of();
@@ -256,6 +253,9 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     private final ThreadLocal<UUID> activeTensorPlanTraceId = new ThreadLocal<>();
     private volatile Consumer<GenerationDebugEvent> generationDebugHook = event -> {};
     private volatile Consumer<LayerDebugEvent> layerDebugHook = event -> {};
+    private DeadReckoningTrace deadReckoningTrace;
+    private String deadReckoningOwner;
+    private String deadReckoningModel;
 
      protected AbstractModel(InferenceType inferenceType, Config c, WeightLoader w, PreTrainedTokenizer t, DType workingMemoryDType,
                               DType workingQType, Optional<DType> modelQType,
@@ -296,7 +296,6 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
         w.setLighter(this.lighter);
         this.compositeOps = new CompositeOps(lighter, metricRegistry);
          this.kvBufferCacheSettings = kvBufferCacheSettings;
-         this.kvBufferCache = new KvBufferCache(this, kvBufferCacheSettings, lighter);
          this.kvBlockManager = new KvBlockManager(metricRegistry, kvBufferCacheSettings, lighter);
          this.kvCacheManager = new KvCacheManager(c.numberOfLayers, c.contextLength,
                  c.kvLength / tensorParallelContext.size(), workingMemoryDType, kvBufferCacheSettings,
@@ -438,10 +437,7 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
         return tensorParallelCollectives;
     }
 
-    public KvBufferCache.KvBuffer newKvBuffer() {
-        return kvBufferCache.getEphemeralKvBuffer();
-    }
-
+    
     public KvCacheManager kvCacheManager() {
         return kvCacheManager;
     }
@@ -601,14 +597,13 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     }
 
     public void emitPromptPrefillDebug(int[] promptTokens, int prefixLength, int startPosition,
-            int tokensToProcessLength, KvBufferCache.KvBuffer kvBuffer) {
+            int tokensToProcessLength) {
         generationDebugHook.accept(new GenerationDebugEvent(
                 GenerationDebugEventType.AFTER_PROMPT_PREFILL,
                 promptTokens,
                 prefixLength,
                 startPosition,
-                tokensToProcessLength,
-                kvBuffer));
+                tokensToProcessLength));
     }
 
     public int getLocalNumberOfHeads() {
@@ -658,16 +653,48 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
         this.layerDebugHook = event -> {};
     }
 
+    void configureDeadReckoning(DeadReckoningParams params, String owner, String model) {
+        if (deadReckoningTrace != null) {
+            deadReckoningTrace.close();
+            deadReckoningTrace = null;
+        }
+        if (params != null) {
+            deadReckoningTrace = new DeadReckoningTrace(params);
+            deadReckoningOwner = owner;
+            deadReckoningModel = model;
+            setLayerDebugHook(deadReckoningTrace::recordLayer);
+        }
+    }
+
+    void deadReckoningHeader(PromptContext prompt, GeneratorParameters parameters) {
+        if (deadReckoningTrace != null) {
+            deadReckoningTrace.recordHeader(deadReckoningOwner, deadReckoningModel, prompt, parameters,
+                    Arrays.stream(constructPromptTokens(encodeText(prompt.getPrompt())))
+                            .asLongStream().toArray());
+        }
+    }
+
+    void deadReckoningResponse(Response response) {
+        if (deadReckoningTrace != null) {
+            deadReckoningTrace.recordResponse(response);
+        }
+    }
+
     public void emitLayerDebug(int layerIndex, String stage, AbstractTensor hiddenStates) {
-        layerDebugHook.accept(new LayerDebugEvent(layerIndex, stage, tensorParallelContext, hiddenStates));
+        try (TensorRef tensor = TensorRef.borrowed(hiddenStates)) {
+            emitLayerDebug(layerIndex, stage, tensor);
+        }
     }
 
     public void emitLayerDebug(int layerIndex, String stage, TensorRef hiddenStates) {
-        emitLayerDebug(layerIndex, stage, new TensorRefBackedTensor(hiddenStates));
+        layerDebugHook.accept(new LayerDebugEvent(layerIndex, stage, tensorParallelContext, hiddenStates));
     }
 
     void emitGenerationDebug(GenerationDebugEvent event) {
         generationDebugHook.accept(event);
+        if (deadReckoningTrace != null) {
+            deadReckoningTrace.recordGenerationDebug(event);
+        }
     }
 
     private final ConcurrentHashMap<String, ResolvedLoraAdapter> registeredLoraAdapters = new ConcurrentHashMap<>();
@@ -700,7 +727,8 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
             throw new UnsupportedOperationException(getClass().getSimpleName()
                     + " does not support LoRA runtime hot-swap -- see step 4 plan Section 6");
         }
-        registeredLoraAdapters.put(adapterId, new ResolvedLoraAdapter(adapter, getWorkingDType()));
+        adapter.setLighter(getLighter());
+        registeredLoraAdapters.put(adapterId, new ResolvedLoraAdapter(adapter, getWorkingDType(), getLighter()));
     }
 
     public void registerLoraAdapter(String adapterId, LoraAdapterModelFetcher fetcher) {
@@ -763,16 +791,6 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     }
 
     /**
-     * Forces the model's disk-backed KV page cleanup pass to run immediately.
-     *
-     * <p>This is a maintenance/test hook for active disk KV page storage. It does not operate on prefix-cache entries or
-     * any persistent token-prefix manifest.</p>
-     */
-    public void runDiskKvPageSweep() {
-        kvBufferCache.runDiskPageSweep();
-    }
-
-    /**
      * Returns the primary input kind accepted by this model at its forward/generation boundary.
      *
      * <p>Text generation models normally use {@link ModelInputName#INPUT_IDS}. Models with non-text primary inputs,
@@ -800,9 +818,9 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
      * @param mmTokenTypeIds optional one-dimensional multimodal token type ids aligned to the sequence dimension;
      * non-null values are sliced to match the prepared sequence length.
      */
-    protected GenerationStepInputs prepareInputsForGeneration(int[] inputIds, Integer nextSequenceLength, PastKeyValues pastKeyValues, int[] attentionMask, int[] encoderAttentionMask, AbstractTensor inputsEmbeds, boolean firstIteration, int[] positionIds, int[] tokenTypeIds, int[] mmTokenTypeIds) {
+    protected GenerationStepInputs prepareInputsForGeneration(int[] inputIds, Integer nextSequenceLength, PastKeyValues pastKeyValues, int[] attentionMask, int[] encoderAttentionMask, TensorRef inputsEmbeds, boolean firstIteration, int[] positionIds, int[] tokenTypeIds, int[] mmTokenTypeIds) {
         return GenerationInputPreparer.prepareInputsForGeneration(config, inputIds, nextSequenceLength, pastKeyValues, attentionMask, encoderAttentionMask, inputsEmbeds, firstIteration, positionIds, tokenTypeIds, mmTokenTypeIds,
-                shape -> new TensorRefBackedTensor(makeDenseTensorRef(shape)));
+                this::makeDenseTensorRef, lighter);
     }
 
     protected abstract EmbedInput loadInputWeights();
@@ -842,6 +860,10 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
 
     @Override
     public void close() {
+        if (deadReckoningTrace != null) {
+            deadReckoningTrace.close();
+            deadReckoningTrace = null;
+        }
         registeredLoraAdapters.values().forEach(ResolvedLoraAdapter::close);
         registeredLoraAdapters.clear();
         activeLoraAdapter.set(null);
@@ -857,15 +879,12 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
                 throw new RuntimeException(e);
             }
         }
-        kvBufferCache.close();
         if (kvPrefixSnapshotCache != null) {
             kvPrefixSnapshotCache.close();
         }
         if (kvBlockManager != null) {
             kvBlockManager.close();
         }
-        kvCache2SessionAdapters.values().forEach(KvCacheSession::close);
-        kvCache2SessionAdapters.clear();
         modelTensorRefs.forEach(TensorRef::close);
         modelTensorRefs.clear();
         registeredModelTensorRefSet.clear();
@@ -910,37 +929,34 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
         return lighter.allocate(workingDType, s);
     }
 
+    /** Temporary adapter for model components that still consume the legacy tensor type. */
+    protected AbstractTensor loadLegacyWeight(String name) {
+        TensorRef ref = weights.load(name);
+        try {
+            return TensorRefBackedTensor.as(ref, ref.dType());
+        } catch (RuntimeException e) {
+            ref.close();
+            throw e;
+        }
+    }
+
+    /** Temporary adapter for legacy row-sliced model components. */
+    protected AbstractTensor loadLegacyWeightRows(String name, int rowOffset, int rowCount) {
+        TensorRef ref = weights.loadRows(name, rowOffset, rowCount);
+        try {
+            return TensorRefBackedTensor.as(ref, ref.dType());
+        } catch (RuntimeException e) {
+            ref.close();
+            throw e;
+        }
+    }
+
     public DType getWorkingDType() {
         return workingDType;
     }
 
     public DType getWorkingQType() {
         return workingQType;
-    }
-
-    /**
-     * Returns whether a tensor is already in this model's working quantized dtype.
-     *
-     * <p>This method exists to keep tensor ownership explicit at call sites. Older code used {@code maybeQuantize(...)},
-     * which can return different temporary/copy forms depending on dtype and makes close behavior hard to reason about.
-     * New code should branch on this predicate: use the original tensor directly when it is already in the desired dtype,
-     * or call {@link #quantizeToWorkingQuantizedType(AbstractTensor)} when a new temporary tensor is required.</p>
-     */
-    public boolean isInWorkingQuantizedType(AbstractTensor tensor) {
-        return tensor.dType() == workingQType;
-    }
-
-    /**
-     * Quantizes a tensor to this model's working quantized dtype and always returns a new caller-owned tensor.
-     *
-     * <p>This method deliberately does not return the input tensor even if it already has the target dtype. Callers that
-     * want to avoid an unnecessary temporary must first check {@link #isInWorkingQuantizedType(AbstractTensor)} and use the
-     * original tensor in that branch. This keeps resource ownership visible: tensors returned by this method must be
-     * closed by the caller.</p>
-     */
-    public AbstractTensor quantizeToWorkingQuantizedType(AbstractTensor tensor) {
-        TensorRef converted = lighter.reshape(TensorRef.borrowed(tensor), workingQType);
-        return new TensorRefBackedTensor(converted);
     }
 
     public DType getModelDType() {
@@ -1075,8 +1091,11 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
                                            GenerateEvent eventFired, GenerationForwarder forwarder) {
         Objects.requireNonNull(sessionId, "sessionId");
         Objects.requireNonNull(forwarder, "forwarder");
-        return new GenerationEngineRef().generate(this, new ForwarderGenerationBackend(forwarder), sessionId,
+        deadReckoningHeader(promptContext, generatorParameters);
+        Response response = new GenerationEngineRef().generate(this, new ForwarderGenerationBackend(forwarder), sessionId,
                 promptContext, generatorParameters, eventFired);
+        deadReckoningResponse(response);
+        return response;
     }
 
     /** Runs standard generation through the TensorRef-native backend boundary. */
@@ -1084,7 +1103,11 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
             GeneratorParameters generatorParameters, GenerateEvent eventFired, GenerationBackendRef backend) {
         Objects.requireNonNull(sessionId, "sessionId");
         Objects.requireNonNull(backend, "backend");
-        return new GenerationEngineRef().generate(this, backend, sessionId, promptContext, generatorParameters, eventFired);
+        deadReckoningHeader(promptContext, generatorParameters);
+        Response response = new GenerationEngineRef().generate(this, backend, sessionId, promptContext, generatorParameters,
+                eventFired);
+        deadReckoningResponse(response);
+        return response;
     }
 
     @Override
@@ -1092,7 +1115,10 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
         if (!config.isClassifier()) {
             throw new UnsupportedOperationException("Classification not supported by this model");
         }
-        return classifyInput(input, poolingType);
+        deadReckoningTaskStart("CLASSIFICATION", input, poolingType.name());
+        SortedMap<String, Float> result = classifyInput(input, poolingType);
+        deadReckoningClassificationResult(result);
+        return result;
     }
 
     /**
@@ -1148,12 +1174,33 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     }
 
     public float[] embed(String input, PoolingType poolingType) {
+        deadReckoningTaskStart("EMBEDDING", input, poolingType.name());
         //TODO better recipe then this? timed callable
         Timer.Context c = metricRegistry.timer("abstractmodel.embed").time();
         try {
-            return timedEmbedding(input, poolingType);
+            float[] result = timedEmbedding(input, poolingType);
+            deadReckoningEmbeddingResult(result);
+            return result;
         } finally {
             c.stop();
+        }
+    }
+
+    private void deadReckoningTaskStart(String task, String input, String poolingType) {
+        if (deadReckoningTrace != null) {
+            deadReckoningTrace.recordTaskStart(task, input, poolingType);
+        }
+    }
+
+    private void deadReckoningEmbeddingResult(float[] embedding) {
+        if (deadReckoningTrace != null) {
+            deadReckoningTrace.recordEmbeddingResult(embedding);
+        }
+    }
+
+    private void deadReckoningClassificationResult(SortedMap<String, Float> scores) {
+        if (deadReckoningTrace != null) {
+            deadReckoningTrace.recordClassificationResult(scores);
         }
     }
     protected float[] timedEmbedding(String input, PoolingType poolingType) {
@@ -1166,8 +1213,7 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
         try (LocalGenerationBackend backend = new LocalGenerationBackend(this);
              GenerationBackendRef.GenerationSessionRef session = backend.openRef(java.util.UUID.randomUUID(), encoded,
                      new GeneratorParameters());
-             AbstractTensor r = new TensorRefBackedTensor(session.prefill(GenerationCursor.from(encoded,
-                     session.prefixLength())))) {
+             TensorRef r = session.prefill(GenerationCursor.from(encoded, session.prefixLength()))) {
             int promptLength = encoded.length;
             float avgp = 1.0f / promptLength;
             CausualWhisperer.LOGGER.debug("1.0f / promptLength {} = avgp {}", promptLength, avgp);
@@ -1177,45 +1223,35 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
                     if (poolingLayer.isEmpty()){
                         throw new UnsupportedOperationException("no pooling layer for this model");
                     }
-                    AbstractTensor output = r.slice(promptLength - 1);
-                     AbstractTensor pooled = allocateDirty(workingDType, TensorShape.of(1, config.embeddingLength));
-                    try (TensorRef pooledRef = TensorRef.borrowed(pooled);
-                         TensorRef outputRef = TensorRef.borrowed(output);
-                         TensorRef weightsRef = TensorRef.borrowed(poolingLayer.get().getPoolingWeights())) {
+                    try (TensorRef output = r.slice(promptLength - 1);
+                         TensorRef pooled = makeDenseTensorRef(1, config.embeddingLength)) {
                         lighter.batchDotProduct(new io.teknek.reckoning.tensor2.BatchDotProduct()
-                                .result(pooledRef).a(outputRef).b(weightsRef)
+                                .result(pooled).a(output).b(poolingLayer.get().getPoolingWeights())
                                 .aColumnOffset(0).bColumnOffset(0).columnLength(config.embeddingLength)
                                 .resultRowOffset(0).bRowOffset(0).rowChunkSize(config.embeddingLength));
+                        poolingLayer.get().getPoolingBias().ifPresent(bias ->
+                                lighter.accumulate(new io.teknek.reckoning.tensor2.Accumulate(bias)
+                                        .into(pooled).offsetAndLength(0, config.embeddingLength)));
+                        VectorMath.pfor(0, config.embeddingLength, i -> {
+                            outputEmbedding[i] = ActivationFunction.eval(config.activationFunction, pooled.get(0, i));
+                        }, pool);
+                        return outputEmbedding;
                     }
-                    poolingLayer.get().getPoolingBias().ifPresent(bias -> {
-                        try (TensorRef pooledRef = TensorRef.borrowed(pooled);
-                             TensorRef biasRef = TensorRef.borrowed(bias)) {
-                            lighter.accumulate(new io.teknek.reckoning.tensor2.Accumulate(biasRef)
-                                    .into(pooledRef).offsetAndLength(0, config.embeddingLength));
-                        }
-                    });
-                    VectorMath.pfor(0, config.embeddingLength, i -> {
-                        // BERT seems to use tanh for pooling rather than gelu
-                        //outputEmbedding[i] = ActivationFunction.eval(ActivationFunction.Type.TANH, pooled.get(0, i));
-                        outputEmbedding[i] = ActivationFunction.eval(config.activationFunction, pooled.get(0, i));
-                    }, pool);
-                    return outputEmbedding;
                 }
                 for (int i = 0; i < promptLength; i++) {
-                    AbstractTensor output = r.slice(i);
-                    // Pooling
-                    for (int ii = 0; ii < config.embeddingLength; ii++) {
-
-                        switch (poolingType) {
-                            case AVG:
-                                outputEmbedding[ii] += output.get(0, ii) * avgp;
-                                break;
-                            case MAX:
-                                outputEmbedding[ii] = Math.max(outputEmbedding[ii], output.get(0, ii));
-                                break;
-                            case SUM:
-                                outputEmbedding[ii] += output.get(0, ii);
-                                break;
+                    try (TensorRef output = r.slice(i)) {
+                        for (int ii = 0; ii < config.embeddingLength; ii++) {
+                            switch (poolingType) {
+                                case AVG:
+                                    outputEmbedding[ii] += output.get(0, ii) * avgp;
+                                    break;
+                                case MAX:
+                                    outputEmbedding[ii] = Math.max(outputEmbedding[ii], output.get(0, ii));
+                                    break;
+                                case SUM:
+                                    outputEmbedding[ii] += output.get(0, ii);
+                                    break;
+                            }
                         }
                     }
                 }
@@ -1378,23 +1414,6 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
             return "unknown";
         }
         return String.format(Locale.ROOT, "%.1f", tokensPerSecond);
-    }
-
-    /** Returns an owned working tensor that callers may safely close. */
-    public AbstractTensor maybeQuantize(AbstractTensor t) {
-        AbstractTensor t2 = allocateDirty(t.dType(), t.shape());
-        t2.copyFrom(t, 0, 0, Ints.checkedCast(t.size()));
-        return t2;
-    }
-
-    /** Returns a close-safe read-only tensor when no dtype conversion is needed; otherwise returns an owned tensor. */
-    public AbstractTensor maybeQuantizeReadOnly(AbstractTensor t, String counterPrefix) {
-        if (t.dType() == workingQType) {
-            InferenceProfiler.counter(metricRegistry, counterPrefix + ".read_only").inc();
-            return new ReadOnlyTensor(t);
-        }
-        InferenceProfiler.counter(metricRegistry, counterPrefix + ".copy_or_quantize").inc();
-        return quantizeToWorkingQuantizedType(t);
     }
 
     /** Close-safe TensorRef equivalent of {@link #maybeQuantizeReadOnly(AbstractTensor, String)}. */
