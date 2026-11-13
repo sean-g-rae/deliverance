@@ -2,7 +2,7 @@
     <parent>
         <groupId>io.teknek.reckoning</groupId>
         <artifactId>reckoning-parent</artifactId>
-        <version>0.0.17-SNAPSHOT</version>
+        <version>0.0.18-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
     <artifactId>vibrant-maven-plugin</artifactId>
@@ -132,8 +132,9 @@
             <plugin>
                 <groupId>org.sonatype.central</groupId>
                 <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>${central.publishing.plugin.version}</version>
                 <configuration>
-                    <!-- If this plugin must be kept out of Central publishing again, set this to true. -->
+                    <publishingServerId>central</publishingServerId>
                     <skipPublishing>false</skipPublishing>
                 </configuration>
             </plugin>

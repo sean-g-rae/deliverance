@@ -2,7 +2,7 @@
     <parent>
         <groupId>io.teknek.reckoning</groupId>
         <artifactId>reckoning-parent</artifactId>
-        <version>0.0.17-SNAPSHOT</version>
+        <version>0.0.18-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
     <artifactId>vibrant-maven-plugin-demo</artifactId>
@@ -22,8 +22,9 @@
             <plugin>
                 <groupId>org.sonatype.central</groupId>
                 <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>${central.publishing.plugin.version}</version>
                 <configuration>
-                    <!-- Demo module is not intended for Maven Central. Set false if you want to publish it. -->
+                    <publishingServerId>central</publishingServerId>
                     <skipPublishing>true</skipPublishing>
                 </configuration>
             </plugin>
