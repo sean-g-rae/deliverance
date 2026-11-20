@@ -54,7 +54,7 @@ public final class PackedBlockAttention2 {
             int queryBlockRows = queryBlockRows(queryRows, totalVisibleRows);
             int headSplits = headSplitCount(numberOfHeads, queryBlockRows, totalVisibleRows);
             model.runChunks("packedblockattention2.heads", 0, numberOfHeads, headSplits,
-                    Optional.empty(), (headStart, headCount) -> {
+                    (headStart, headCount) -> {
                 int headEnd = headStart + headCount;
                 for (int head = headStart; head < headEnd; head++) {
                     int kvHead = head / headGroupSize;
@@ -160,7 +160,7 @@ public final class PackedBlockAttention2 {
         try (Timer.Context ignored = InferenceProfiler.timer(metricRegistry,
                 "packedblockattention2.decode_paged_attention").time()) {
             model.runChunks("packedblockattention2.decode_heads", 0, numberOfHeads,
-                    Math.max(1, Math.min(numberOfHeads, model.getPool().getCoreCount())), Optional.empty(),
+                    Math.max(1, Math.min(numberOfHeads, model.getPool().getCoreCount())),
                     (headStart, headCount) -> {
                 int headEnd = headStart + headCount;
                 for (int head = headStart; head < headEnd; head++) {

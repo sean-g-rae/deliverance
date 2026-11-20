@@ -60,11 +60,8 @@
 
         <dependency>
             <groupId>io.teknek.reckoning</groupId>
-            <artifactId>native</artifactId>
+            <artifactId>native-all</artifactId>
             <version>${project.version}</version>
-            <classifier>${os.detected.name}-${os.detected.arch}</classifier>
-            <optional>true</optional>
-            <scope>test</scope>
         </dependency>
 
         <dependency>
@@ -119,11 +116,7 @@
             <artifactId>resilience4j-timelimiter</artifactId>
             <version>${resilience4j.version}</version>
         </dependency>
-        <dependency>
-            <groupId>org.lz4</groupId>
-            <artifactId>lz4-java</artifactId>
-            <version>${lz4.version}</version>
-        </dependency>
+
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>

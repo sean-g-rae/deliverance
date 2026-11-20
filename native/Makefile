@@ -19,7 +19,8 @@
 #   JNI_PLATFORM - "linux" for linux and "darwin" for mac.
 #   LIB_DIR      - where the static library will be built in
 #   OBJ_DIR      - where the obj files will be built in (defaults to LIB_DIR)
-#   LIB_NAME     - the name of the native library
+#   TENSOR2_LIB_NAME - the name of the Tensor2 native library
+#   GPU_LIB_NAME     - the name of the GPU native library
 #   LIB_EXT      - the extension of the native library (e.g. a / dll)
 OBJ_DIR ?= $(LIB_DIR)
 
@@ -34,24 +35,25 @@ endif
 SRC_DIR := src/main/c/simd
 SRCS    := $(wildcard $(SRC_DIR)/*.c)
 OBJS    := $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
-LIB     := $(LIB_DIR)/$(LIB_NAME).$(LIB_EXT)
+SIMD_OBJ := $(OBJ_DIR)/vector_simd.o
 TENSOR2_SRC_DIR := src/main/c/tensor2
 TENSOR2_SRCS    := $(wildcard $(TENSOR2_SRC_DIR)/*.c)
 TENSOR2_OBJS    := $(TENSOR2_SRCS:$(TENSOR2_SRC_DIR)/%.c=$(OBJ_DIR)/tensor2/%.o)
 TENSOR2_LIB_NAME ?= libreckoning_tensor2
-TENSOR2_LIB      := $(LIB_DIR)/$(TENSOR2_LIB_NAME).$(LIB_EXT)
+GPU_LIB_NAME ?= libreckoninggpu
+TENSOR2_LIB := $(LIB_DIR)/$(TENSOR2_LIB_NAME).$(LIB_EXT)
+LIB2 := $(LIB_DIR)/$(GPU_LIB_NAME).$(LIB_EXT)
 
 # GPU‐accelerated build (optional; enabled if CFLAGS2 is set)
 OBJ2_DIR := $(OBJ_DIR)/gpu
 SRC2_DIR := src/main/c/gpu
 SRCS2    := $(wildcard $(SRC2_DIR)/*.c)
 OBJS2    := $(SRCS2:$(SRC2_DIR)/%.c=$(OBJ2_DIR)/%.o)
-LIB2     := $(LIB_DIR)/$(LIB_NAME)gpu.$(LIB_EXT)
 BF16_TEST := $(OBJ_DIR)/test_bf16_gemm
 GPU_HEADER_TEST := $(OBJ_DIR)/test_gpu_header.o
 TENSOR2_NATIVE_TEST := $(OBJ_DIR)/test_tensor2_native
 
-all: $(LIB) $(TENSOR2_LIB)
+all: $(TENSOR2_LIB)
 ifdef CFLAGS2
 all: $(LIB2)
 endif
@@ -60,10 +62,6 @@ tensor2: $(TENSOR2_LIB)
 
 #───────────────────────────────────────────────────────────────────────────────
 # 1) Build the core SIMD library (static .a on all platforms)
-$(LIB): $(OBJS)
-	mkdir -p $(LIB_DIR)
-	$(CC) $(LDFLAGS) -o $(LIB) $^
-
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	mkdir -p $(OBJ_DIR)
 	$(CC) -c $< -o $@ $(CFLAGS)
@@ -72,7 +70,7 @@ $(OBJ_DIR)/tensor2/%.o: $(TENSOR2_SRC_DIR)/%.c
 	mkdir -p $(OBJ_DIR)/tensor2
 	$(CC) -c $< -o $@ $(CFLAGS)
 
-$(TENSOR2_LIB): $(TENSOR2_OBJS) $(OBJ_DIR)/vector_simd.o
+$(TENSOR2_LIB): $(TENSOR2_OBJS) $(SIMD_OBJ)
 	mkdir -p $(LIB_DIR)
 	$(CC) $(LDFLAGS) -o $(TENSOR2_LIB) $^
 

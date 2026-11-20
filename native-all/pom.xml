@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.teknek.reckoning</groupId>
+    <artifactId>reckoning-parent</artifactId>
+    <version>0.0.18-SNAPSHOT</version>
+  </parent>
+  <artifactId>native-all</artifactId>
+  <name>native-all</name>
+
+  <properties>
+    <native.all.host.classifier>${os.detected.name}-${os.detected.arch}</native.all.host.classifier>
+    <native.all.work>${project.build.outputDirectory}</native.all.work>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.teknek.reckoning</groupId>
+      <artifactId>tensor</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.teknek.reckoning</groupId>
+      <artifactId>native</artifactId>
+      <version>${project.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>assemble-native-all</id>
+            <phase>process-resources</phase>
+            <goals><goal>run</goal></goals>
+            <configuration>
+              <target>
+                <mkdir dir="${native.all.work}"/>
+                <copy todir="${native.all.work}" overwrite="false">
+                  <fileset dir="${project.basedir}/../native/target/classes"/>
+                </copy>
+                <mkdir dir="${native.all.work}/META-INF/native/${native.all.host.classifier}"/>
+                <copy todir="${native.all.work}/META-INF/native/${native.all.host.classifier}">
+                  <fileset dir="${project.basedir}/../native/target/native-lib-only/${native.all.host.classifier}"/>
+                </copy>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.1</version>
+        <configuration>
+          <classesDirectory>${native.all.work}</classesDirectory>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -42,7 +42,6 @@ public final class TensorPlan {
 
     private final WrappedForkJoinPool pool;
     private final MetricRegistry metricRegistry;
-    private final TensorRuntime runtime;
     private final Lighter lighter;
     private final String ownerClass;
     private final TensorPlanAdaptiveSplitTuner adaptiveSplitTuner;
@@ -58,25 +57,14 @@ public final class TensorPlan {
 
     public TensorPlan(WrappedForkJoinPool pool, MetricRegistry metricRegistry,
             Object owner) {
-        this(pool, metricRegistry, owner, null);
-    }
-
-    public TensorPlan(WrappedForkJoinPool pool, MetricRegistry metricRegistry,
-            TensorRuntime runtime) {
-        this(pool, metricRegistry, null, runtime);
-    }
-
-    public TensorPlan(WrappedForkJoinPool pool, MetricRegistry metricRegistry,
-            Object owner, TensorRuntime runtime) {
-        this(pool, metricRegistry, owner, runtime, new Lighter(metricRegistry == null ? new MetricRegistry()
+        this(pool, metricRegistry, owner, new Lighter(metricRegistry == null ? new MetricRegistry()
                 : metricRegistry));
     }
 
     public TensorPlan(WrappedForkJoinPool pool, MetricRegistry metricRegistry,
-            Object owner, TensorRuntime runtime, Lighter lighter) {
+            Object owner, Lighter lighter) {
         this.pool = Objects.requireNonNull(pool, "pool");
         this.metricRegistry = metricRegistry;
-        this.runtime = runtime;
         this.lighter = Objects.requireNonNull(lighter, "lighter");
         this.ownerClass = owner == null ? "UNKNOWN" : owner.getClass().getSimpleName();
         this.adaptiveSplitTuner = owner instanceof TensorPlanAdaptiveSplitTuner tuner ? tuner : null;
@@ -174,11 +162,6 @@ public final class TensorPlan {
             Objects.requireNonNull(action, "action");
             int splitsCount = splitCount == null ? Math.max(1, pool.getCoreCount()) : splitCount;
             List<TensorSplit> splits = TensorLib.calculateTSplits(offset, length, splitsCount);
-            if (useTensorRuntime()) {
-                runtime.runChunks(operation, Math.toIntExact(offset), Math.toIntExact(length), splits.size(),
-                        Optional.empty(), action::run);
-                return;
-            }
             List<ForkJoinTask<?>> tasks = new ArrayList<>();
             for (TensorSplit split : splits) {
                 tasks.add(pool.getUnderlying().submit(() -> action.run(split.offset(), split.length())));
@@ -1146,7 +1129,4 @@ public final class TensorPlan {
         }
     }
 
-    private boolean useTensorRuntime() {
-        return runtime != null && runMode != RunMode.CALLER_THREAD;
-    }
 }

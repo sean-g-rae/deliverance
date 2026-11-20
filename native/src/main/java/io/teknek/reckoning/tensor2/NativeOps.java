@@ -5,7 +5,7 @@ import io.teknek.reckoning.tensor.operations.tensor2native.Tensor2Native;
 import io.teknek.reckoning.tensor.operations.cnative.NativeSimd;
 import io.teknek.reckoning.tensor.operations.MachineSpec;
 import io.teknek.reckoning.tensor.operations.RuntimeSupport;
-import io.teknek.reckoning.tensor.operations.util.JarSupport;
+import io.teknek.reckoning.tensor.operations.util.NativeLibraryManager;
 import io.teknek.dysfx.Either;
 
 import java.lang.foreign.Arena;
@@ -33,15 +33,9 @@ public class NativeOps implements TensorOps, CompositeOpsProvider, AutoCloseable
     }
 
     private static boolean loadOnce() {
-        boolean libraryLoaded = JarSupport.maybeLoadLibrary("reckoning_tensor2");
-        if (!libraryLoaded) {
-            try {
-                System.loadLibrary("reckoning_tensor2");
-                libraryLoaded = true;
-            } catch (UnsatisfiedLinkError ignored) {
-                loadFailure = ignored;
-                return false;
-            }
+        if (!NativeLibraryManager.initialize()) {
+            loadFailure = new IllegalStateException(NativeLibraryManager.reason());
+            return false;
         }
         try {
             Tensor2Native.tensor2_batch_dot_f32_f32$address();

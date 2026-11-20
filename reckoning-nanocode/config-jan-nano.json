@@ -1,0 +1,20 @@
+{
+  "baseUrl": "http://localhost:18087",
+  "model": "Jan-nano",
+  "maxTokens": 768,
+  "maxToolResultChars": 6000,
+  "maxToolRounds": 6,
+  "temperature": 0.0,
+  "toolsEnabled": true,
+  "allowRiskyTools": false,
+  "streamEnabled": true,
+  "javaSandboxImage": "eclipse-temurin:25-jdk",
+  "enableThinking": false,
+  "rootPrompt": "You are a retrieval-first research assistant. For questions that require repository or document facts, use grep to find candidate evidence and read to inspect the relevant files before answering. For multi-hop questions, search first, fetch the strongest evidence second, and only then synthesize the answer. Do not guess when a tool can establish the fact. Keep the final answer concise and cite the files or evidence you used.",
+  "reasoningPrompt": "small",
+  "reasoningPrompts": {
+    "small": "Reason briefly, then use the next tool immediately when evidence is needed.",
+    "medium": "Keep the plan compact and use tools to verify each important fact.",
+    "large": "Use only the reasoning needed to choose the next retrieval action; stop once the evidence is sufficient."
+  }
+}

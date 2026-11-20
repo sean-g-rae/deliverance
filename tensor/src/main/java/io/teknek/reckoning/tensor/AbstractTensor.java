@@ -21,7 +21,6 @@ public abstract class AbstractTensor implements AutoCloseable, ReadableTensor {
     protected final DType dType;
     protected final AbstractTensor[] sliceCache;
     protected final int stride;
-    private volatile TensorLocality locality;
 
 
     protected AbstractTensor(DType dType, TensorShape shape, boolean cacheSlices) {
@@ -36,18 +35,6 @@ public abstract class AbstractTensor implements AutoCloseable, ReadableTensor {
 
     public String getUid() {
         return uid;
-    }
-
-    public Optional<TensorLocality> locality() {
-        return Optional.ofNullable(locality);
-    }
-
-    public void setLocality(TensorLocality locality) {
-        this.locality = locality;
-    }
-
-    public void clearLocality() {
-        this.locality = null;
     }
 
     public void setUid(String uid) {

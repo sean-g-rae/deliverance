@@ -19,6 +19,6 @@ cd "$SCRIPT_DIR"
   --output "$OUT_DIR" \
   -t "$PACKAGE" \
   -I "$SCRIPT_DIR" \
-  -l reckoning \
+  -l reckoning_tensor2 \
   --header-class-name NativeSimd \
   vector_simd.h

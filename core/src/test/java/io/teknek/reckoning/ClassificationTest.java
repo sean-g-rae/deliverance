@@ -6,6 +6,7 @@ import io.teknek.reckoning.model.AbstractModel;
 import io.teknek.reckoning.model.AutoModelForSequenceClassification;
 import io.teknek.reckoning.safetensors.fetch.ModelFetcher;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.util.Map;
 import java.util.LinkedHashMap;
@@ -52,6 +53,63 @@ public class ClassificationTest {
                     .getKey();
             assertEquals("en", predicted);
         }
+    }
+
+    @Test
+    public void classifyXlmRobertaLanguageWithoutNative() {
+        long start = System.nanoTime();
+        try (AbstractModel model = AutoModelForSequenceClassification
+                .newBuilder(new ModelFetcher("papluca", "xlm-roberta-base-language-detection"))
+                .build()) {
+            Map<String, Float> result = model.classify("This is English.", PoolingType.MODEL);
+            assertTrue(result.containsKey("en"));
+            String predicted = result.entrySet().stream()
+                    .max(Map.Entry.comparingByValue())
+                    .orElseThrow()
+                    .getKey();
+            assertEquals("en", predicted);
+        }
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        System.out.println("XLM-R classification without native: " + elapsedMillis + " ms");
+    }
+
+    @Test
+    @Tag("performance")
+    public void classifyXlmRobertaInputScalingNative() {
+        measureXlmRobertaInputScaling(true);
+    }
+
+    @Test
+    @Tag("performance")
+    public void classifyXlmRobertaInputScalingPanama() {
+        measureXlmRobertaInputScaling(false);
+    }
+
+    private void measureXlmRobertaInputScaling(boolean nativeProvider) {
+        try (AbstractModel model = AutoModelForSequenceClassification
+                .newBuilder(new ModelFetcher("papluca", "xlm-roberta-base-language-detection"))
+                .build()) {
+            model.classify(scalingPrompt(100), PoolingType.MODEL); // warm up the loaded model
+            System.out.println("XLM-R scaling provider=" + (nativeProvider ? "native" : "panama"));
+            System.out.println("chars,elapsed_ms,predicted");
+            for (int length = 100; length <= 2000; length += 100) {
+                String prompt = scalingPrompt(length);
+                long start = System.nanoTime();
+                Map<String, Float> result = model.classify(prompt, PoolingType.MODEL);
+                long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                String predicted = result.entrySet().stream()
+                        .max(Map.Entry.comparingByValue())
+                        .orElseThrow()
+                        .getKey();
+                assertEquals("en", predicted, "chars=" + length);
+                System.out.println(length + "," + elapsedMillis + "," + predicted);
+            }
+        }
+    }
+
+    private static String scalingPrompt(int length) {
+        String unit = "This English article describes language technology and public research. ";
+        return unit.repeat((length / unit.length()) + 1).substring(0, length);
     }
 
     @Test

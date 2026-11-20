@@ -370,8 +370,7 @@ public abstract class KvCacheSelfAttention2 extends BaseCausalSelfAttention2 {
         io.teknek.reckoning.tensor2.GroupedQkvProjection projection = new io.teknek.reckoning.tensor2.GroupedQkvProjection(
                 input, query, key, value, queryAttentionWeights, keyAttentionWeights, valueAttentionWeights,
                 config.embeddingLength, 0, 0, kvLength);
-        TensorPlan plan = new TensorPlan(model.getPool(), metricRegistry, model,
-                model.getTensorRuntime(), lighter);
+        TensorPlan plan = new TensorPlan(model.getPool(), metricRegistry, model, lighter);
         TensorPlan.Tensor inputNode = plan.input("qkv.input", input);
         TensorPlan.ImmutableTensor queryWeightsNode = plan.immutable("qkv.query.weight", queryAttentionWeights);
         TensorPlan.ImmutableTensor keyWeightsNode = plan.immutable("qkv.key.weight", keyAttentionWeights);
@@ -422,7 +421,7 @@ public abstract class KvCacheSelfAttention2 extends BaseCausalSelfAttention2 {
 
     private void project(TensorRef output, TensorRef input, TensorRef weight, int inputLength,
             int outputLength, String metricName, int splitSize, ForwardPhase phase) {
-        model.runChunks(metricName, 0, outputLength, splitSize, Optional.empty(),
+        model.runChunks(metricName, 0, outputLength, splitSize,
                 (chunkStart, chunkSize) -> {
             try (Timer.Context ignored = InferenceProfiler.timer(metricRegistry, metricName).time()) {
                 projectChunk(output, input, weight, inputLength, chunkStart, chunkSize, phase);
@@ -475,7 +474,7 @@ public abstract class KvCacheSelfAttention2 extends BaseCausalSelfAttention2 {
                     "kvcacheselfattention2.output_projection").time()) {
                 TensorRef projectionInputForChunks = projectionInput;
                 model.runChunks("kvcacheselfattention2.output_projection", 0, config.embeddingLength,
-                        32, Optional.empty(), (chunkStart, chunkSize) ->
+                        32, (chunkStart, chunkSize) ->
                         {
                              projectChunk(output, projectionInputForChunks, outputProjectionWeights,
                                      attentionLength, chunkStart, chunkSize, phase);

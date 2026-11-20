@@ -16,7 +16,6 @@ public final class ReadOnlyTensor extends AbstractTensor {
         this.delegate = delegate;
         this.closeDelegate = closeDelegate;
         this.uid = delegate.getUid();
-        delegate.locality().ifPresent(this::setLocality);
     }
 
     public AbstractTensor delegate() {

@@ -26,7 +26,6 @@ public final class TrackedReadOnlyTensor extends AbstractTensor {
         this.delegate = delegate;
         this.closeDelegate = closeDelegate;
         this.uid = delegate.getUid();
-        delegate.locality().ifPresent(this::setLocality);
         this.initialChecksum = checksum(delegate);
     }
 

@@ -3,7 +3,6 @@ package io.teknek.reckoning.model;
 import io.teknek.reckoning.DType;
 import io.teknek.reckoning.JsonUtils;
 import io.teknek.reckoning.tensor.KvBufferCacheSettings;
-import io.teknek.reckoning.tensorlib.TensorRuntimeMode;
 
 import java.io.File;
 import java.io.IOException;
@@ -22,6 +21,7 @@ public record AutoModelConfig(
         Optional<DType> workingMemoryType,
         Optional<DType> workingQuantType,
         Optional<DType> outputHeadQuantization,
+        Optional<String> toolCallParser,
         Optional<Boolean> gpuPrefill,
         Optional<Boolean> gpuDecode,
         Optional<Boolean> gpuDecodeAttention,
@@ -31,7 +31,6 @@ public record AutoModelConfig(
         Optional<Boolean> download,
         Optional<Integer> maxPrefillBatchSize,
         Optional<Integer> maxBatchSize,
-        Optional<TensorRuntimeMode> tensorRuntimeMode,
         Optional<Map<TensorProviderKind, Integer>> parallelSplitSizeFixed,
         Optional<Map<TensorProviderKind, Double>> parallelSplitSizeMultiplier,
         Optional<Integer> groupedDecodeQkvSplitSize,
@@ -44,6 +43,7 @@ public record AutoModelConfig(
         workingMemoryType = workingMemoryType == null ? Optional.empty() : workingMemoryType;
         workingQuantType = workingQuantType == null ? Optional.empty() : workingQuantType;
         outputHeadQuantization = outputHeadQuantization == null ? Optional.empty() : outputHeadQuantization;
+        toolCallParser = toolCallParser == null ? Optional.empty() : toolCallParser;
         gpuPrefill = gpuPrefill == null ? Optional.empty() : gpuPrefill;
         gpuDecode = gpuDecode == null ? Optional.empty() : gpuDecode;
         gpuDecodeAttention = gpuDecodeAttention == null ? Optional.empty() : gpuDecodeAttention;
@@ -53,7 +53,6 @@ public record AutoModelConfig(
         download = download == null ? Optional.empty() : download;
         maxPrefillBatchSize = maxPrefillBatchSize == null ? Optional.empty() : maxPrefillBatchSize;
         maxBatchSize = maxBatchSize == null ? Optional.empty() : maxBatchSize;
-        tensorRuntimeMode = tensorRuntimeMode == null ? Optional.empty() : tensorRuntimeMode;
         parallelSplitSizeFixed = parallelSplitSizeFixed == null ? Optional.empty() : parallelSplitSizeFixed;
         parallelSplitSizeMultiplier = parallelSplitSizeMultiplier == null ? Optional.empty() : parallelSplitSizeMultiplier;
         groupedDecodeQkvSplitSize = groupedDecodeQkvSplitSize == null ? Optional.empty() : groupedDecodeQkvSplitSize;

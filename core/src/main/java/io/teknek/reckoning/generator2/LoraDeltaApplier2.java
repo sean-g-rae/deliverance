@@ -43,7 +43,7 @@ final class LoraDeltaApplier2 {
         int inputLength = input.shape().last();
         int outputLength = output.shape().last();
         model.runChunks(metricName, 0, outputLength, 32,
-                java.util.Optional.empty(), (chunkStart, chunkSize) -> {
+                (chunkStart, chunkSize) -> {
                     if (phase == ForwardPhase.PREFILL && input.shape().first() > 1) {
                         lighter.batchDotProduct(new BatchDotProduct()
                                 .result(output).a(input).b(weights)

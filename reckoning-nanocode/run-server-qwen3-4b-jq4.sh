@@ -71,5 +71,5 @@ java \
   -Dserver.undertow.accesslog.dir=${RECKONING_ACCESS_LOG_DIR:-./logs} \
   -Dserver.undertow.accesslog.prefix=access_log \
   -Dserver.undertow.accesslog.suffix=.log \
-  -Dspring.config.location=file:./qwen3-4b-jq4.yaml \
+  -Dspring.config.location=file:./${RECKONING_SPRING_CONFIG:-qwen3-4b-jq4.yaml} \
   -jar "$WEB_JAR"

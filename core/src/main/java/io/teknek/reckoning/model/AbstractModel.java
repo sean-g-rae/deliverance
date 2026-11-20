@@ -65,8 +65,6 @@ import io.teknek.reckoning.tensor2.TensorRef;
 import io.teknek.reckoning.tensorlib.PlannedTensorRef;
 import io.teknek.reckoning.tensorlib.TensorPlan;
 import io.teknek.reckoning.tensorlib.TensorPlanAdaptiveSplitTuner;
-import io.teknek.reckoning.tensorlib.TensorRuntime;
-import io.teknek.reckoning.tensorlib.TensorRuntimeMode;
 import io.teknek.reckoning.toolcallparser.ToolCallParser;
 import jdk.incubator.vector.FloatVector;
 import org.slf4j.Logger;
@@ -238,8 +236,6 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     private final Queue<ModelLineageEntry> modelLineageEntries = new ConcurrentLinkedQueue<>();
     private final Queue<TensorRef> modelTensorRefs = new ConcurrentLinkedQueue<>();
     private final Set<TensorRef> registeredModelTensorRefSet = ConcurrentHashMap.newKeySet();
-    private Optional<TensorRuntimeMode> tensorRuntimeMode = Optional.empty();
-    private TensorRuntime tensorRuntime;
     private Map<String, Object> generationOptions = Map.of();
     private Optional<Integer> groupedDecodeQkvSplitSize = Optional.empty();
     private final ConcurrentMap<String, AdaptiveSplitState> adaptiveSplitStates = new ConcurrentHashMap<>();
@@ -313,7 +309,7 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
         if (initialized) {
             return;
         }
-        this.modelLineagePlan = new TensorPlan(pool, metricRegistry, this, tensorRuntime, lighter);
+        this.modelLineagePlan = new TensorPlan(pool, metricRegistry, this, lighter);
         logger.debug("model init start config={} inference_type={}", config.getClass().getSimpleName(), inferenceType);
         this.embedInput = inferenceType.isInput ? loadInputWeights() : null;
         boolean tensorRefExecution = inferenceType.isFwdPass && usesTensorRefExecution();
@@ -1423,29 +1419,9 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
      * bounded pools and deadlock the request. Use caller-managed/synchronous provider
      * execution for operations inside this callback.</p>
      */
-    public void runChunks(String operation, int offset, int length, int splitSize, Optional<AbstractTensor> localityTensor,
+    public void runChunks(String operation, int offset, int length, int splitSize,
             io.teknek.reckoning.math.BiIntConsumer action) {
-        if (tensorRuntime != null) {
-            tensorRuntime.runChunks(operation, offset, length, splitSize, localityTensor, action);
-        } else {
-            VectorMath.pchunk(offset, length, action, splitSize, pool);
-        }
-    }
-
-    public Optional<TensorRuntimeMode> getTensorRuntimeMode() {
-        return tensorRuntimeMode;
-    }
-
-    public void setTensorRuntimeMode(Optional<TensorRuntimeMode> tensorRuntimeMode) {
-        this.tensorRuntimeMode = Objects.requireNonNull(tensorRuntimeMode, "tensorRuntimeMode");
-    }
-
-    public TensorRuntime getTensorRuntime() {
-        return tensorRuntime;
-    }
-
-    public void setTensorRuntime(TensorRuntime tensorRuntime) {
-        this.tensorRuntime = tensorRuntime;
+        VectorMath.pchunk(offset, length, action, splitSize, pool);
     }
 
     public Map<String, Object> generationOptions() {
@@ -1874,7 +1850,6 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
                 + "modelQType=" + modelQType + '\n'
                 + "outputHeadQuantization=" + outputHeadQuantization + '\n'
                 + "tensorProviders=" + lighter.tensorOperations().keySet() + '\n'
-                + "tensorRuntimeMode=" + tensorRuntimeMode + '\n'
                 + "gpuPrefill=" + gpuPrefillEnabled + '\n'
                 + "gpuDecode=" + gpuDecodeEnabled + '\n'
                 + "gpuDecodeAttention=" + gpuDecodeAttentionEnabled + '\n'

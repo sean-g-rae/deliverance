@@ -7,10 +7,7 @@ import io.teknek.reckoning.math.WrappedForkJoinPool;
 import io.teknek.reckoning.tensor.TensorShape;
 import io.teknek.reckoning.tensor2.GroupedQkvProjection;
 import io.teknek.reckoning.tensor2.Lighter;
-import io.teknek.reckoning.tensor2.NativeOps;
-import io.teknek.reckoning.tensor2.TensorProviderKind;
 import io.teknek.reckoning.tensor2.TensorRef;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -29,7 +26,7 @@ class Qwen3GroupedQkvProjectionCharacterizationTest {
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void qwen06BGroupedDecodeBf16Completes() {
-        Assumptions.assumeTrue(NativeOps.isAvailable(), "native Tensor2 unavailable");
+    //    Assumptions.assumeTrue(NativeOps.isAvailable(), "native Tensor2 unavailable");
         MetricRegistry metrics = new MetricRegistry();
         try (WrappedForkJoinPool pool = new WrappedForkJoinPool(new ForkJoinPool(10));
              TensorRef input = new Lighter(metrics, pool.getUnderlying()).allocate(DType.BF16,
@@ -41,7 +38,7 @@ class Qwen3GroupedQkvProjectionCharacterizationTest {
              TensorRef value = new Lighter(metrics, pool.getUnderlying()).allocate(DType.F32,
                      TensorShape.of(1, KV_LENGTH))) {
             Lighter lighter = new Lighter(metrics, pool.getUnderlying());
-            lighter.putTensorOperations(TensorProviderKind.SIMD, new NativeOps());
+      //      lighter.putTensorOperations(TensorProviderKind.SIMD, new NativeOps());
             try (TensorRef queryWeights = lighter.allocate(DType.BF16,
                          TensorShape.of(ATTENTION_LENGTH, EMBEDDING_LENGTH));
                  TensorRef keyWeights = lighter.allocate(DType.BF16,

@@ -156,15 +156,11 @@ public final class InferenceProfiler {
     }
 
     public static boolean shouldPrintCounter(String name) {
-        return COUNTER_NAMES.contains(name) && !isNoisyTensorRuntimeCounter(name);
+        return COUNTER_NAMES.contains(name);
     }
 
     public static boolean shouldPrintCounter(MetricName metricName) {
         return shouldPrintCounter(displayName(metricName));
-    }
-
-    private static boolean isNoisyTensorRuntimeCounter(String name) {
-        return name.startsWith("tensorruntime.affinity.") || name.startsWith("tensorruntime.locality.");
     }
 
     private record TimerDelta(String name, long count, double estimatedTotalNanos) {

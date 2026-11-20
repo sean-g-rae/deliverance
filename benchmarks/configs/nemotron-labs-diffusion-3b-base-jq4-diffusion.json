@@ -3,7 +3,6 @@
   "gpuDiffusionBlockProjection": true,
   "packedBlockAttention": true,
   "maxPrefillBatchSize": 2048,
-  "tensorRuntimeMode": "DISABLED",
   "generationOptions": {
     "mode": "linear_spec",
     "blockLength": 32,

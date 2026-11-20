@@ -1,10 +1,9 @@
 package io.teknek.reckoning.tensor2;
 
 import io.teknek.reckoning.DType;
-import io.teknek.reckoning.tensor.operations.RuntimeSupport;
 import io.teknek.reckoning.tensor.operations.gpunative.NativeGPU;
 import io.teknek.reckoning.tensor.operations.gpunative.Tensor2GpuNative;
-import io.teknek.reckoning.tensor.operations.util.JarSupport;
+import io.teknek.reckoning.tensor.operations.util.NativeLibraryManager;
 import io.teknek.dysfx.Either;
 
 import java.io.IOException;
@@ -164,12 +163,9 @@ public final class GpuOps implements TensorOps, AutoCloseable {
     }
 
     private static void loadLibraries() {
-        if (RuntimeSupport.isWin()) {
-            if (!JarSupport.maybeLoadLibrary("dxcompiler")) System.loadLibrary("dxcompiler");
-            if (!JarSupport.maybeLoadLibrary("dxil")) System.loadLibrary("dxil");
+        if (!NativeLibraryManager.initialize()) {
+            throw new IllegalStateException("Native runtime unavailable: " + NativeLibraryManager.reason());
         }
-        if (!JarSupport.maybeLoadLibrary("webgpu_dawn")) System.loadLibrary("webgpu_dawn");
-        if (!JarSupport.maybeLoadLibrary("reckoninggpu")) System.loadLibrary("reckoninggpu");
     }
 
     private static long registerShader(String resource) throws IOException {

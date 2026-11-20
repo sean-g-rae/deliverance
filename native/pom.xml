@@ -16,7 +16,7 @@
     <exe.make>make</exe.make>
     <exe.compiler>gcc</exe.compiler>
     <exe.archiver>ld</exe.archiver>
-    <nativeLibName>libreckoning</nativeLibName>
+    <gpuLibName>libreckoninggpu</gpuLibName>
     <nativeIncludeDir>${project.basedir}/src/main/c</nativeIncludeDir>
     <nativeJarWorkdir>${project.build.directory}/native-jar-work</nativeJarWorkdir>
     <nativeObjsOnlyDir>${project.build.directory}/native-objs-only/${os.detected.classifier}</nativeObjsOnlyDir>
@@ -98,6 +98,7 @@
             </argLine>
             <systemPropertyVariables>
               <reckoning.tensor2.timing.csv>true</reckoning.tensor2.timing.csv>
+              <reckoning.native.tempdir>${project.build.directory}</reckoning.native.tempdir>
             </systemPropertyVariables>
           </configuration>
         </plugin>
@@ -129,6 +130,27 @@
       </plugins>
     </pluginManagement>
   <plugins>
+    <plugin>
+      <artifactId>maven-antrun-plugin</artifactId>
+      <version>3.1.0</version>
+      <executions>
+        <execution>
+          <id>prepare-native-test-resources</id>
+          <phase>process-test-resources</phase>
+          <goals>
+            <goal>run</goal>
+          </goals>
+          <configuration>
+            <target>
+              <copy todir="${project.build.testOutputDirectory}/META-INF/native/${jni.classifier}"
+                    failonerror="false">
+                <fileset dir="${nativeLibOnlyDir}" erroronmissingdir="false"/>
+              </copy>
+            </target>
+          </configuration>
+        </execution>
+      </executions>
+    </plugin>
     <plugin>
       <artifactId>maven-jar-plugin</artifactId>
       <executions>
@@ -238,7 +260,7 @@
                   <env key="CFLAGS2" value=" -Wno-attributes -fno-omit-frame-pointer -Wunused-variable -fPIC -O3 -march=native -I${dawnWorkDir}/include" />
                   <env key="LDFLAGS" value="-shared" />
                   <env key="LDFLAGS2" value="-L${dawnWorkDir}/lib -lwebgpu_dawn -shared" />
-                  <env key="LIB_NAME" value="${nativeLibName}" />
+                   <env key="GPU_LIB_NAME" value="${gpuLibName}" />
                   <env KEY="LIB_EXT"  value="so" />
                 </exec>
                 <record name="${project.build.directory}/native-build.log" action="stop" />
@@ -263,7 +285,7 @@
                   <env key="OBJ_DIR" value="${nativeObjsOnlyDir}" />
                   <env key="JNI_PLATFORM" value="${jni.platform}" />
                   <env key="CFLAGS" value="-O3 -mavx2 -march=native -Werror -Wno-attributes -fPIC -fno-omit-frame-pointer -Wunused-variable" />
-                  <env key="LIB_NAME" value="${nativeLibName}" />
+                   <env key="GPU_LIB_NAME" value="${gpuLibName}" />
                   <env key="LIB_EXT" value="so" />
                 </exec>
                 <record name="${project.build.directory}/native-smoke-test.log" action="stop" />
@@ -336,7 +358,7 @@
                   <env key="JNI_PLATFORM" value="${jni.platform}" />
                   <env key="CFLAGS" value="-g -O3 -Wno-attributes -fPIC -fno-omit-frame-pointer -Wunused-variable -march=native -flax-vector-conversions -D__ARM_NEON__" />
                   <env key="LDFLAGS" value="-shared" />
-                  <env key="LIB_NAME" value="${nativeLibName}" />
+                   <env key="GPU_LIB_NAME" value="${gpuLibName}" />
                   <env KEY="LIB_EXT"  value="so" />
                 </exec>
                 <record name="${project.build.directory}/native-build.log" action="stop" />
@@ -361,7 +383,7 @@
                   <env key="OBJ_DIR" value="${nativeObjsOnlyDir}" />
                   <env key="JNI_PLATFORM" value="${jni.platform}" />
                   <env key="CFLAGS" value="-g -O3 -Wno-attributes -fPIC -fno-omit-frame-pointer -Wunused-variable -march=native -flax-vector-conversions -D__ARM_NEON__" />
-                  <env key="LIB_NAME" value="${nativeLibName}" />
+                   <env key="GPU_LIB_NAME" value="${gpuLibName}" />
                   <env key="LIB_EXT" value="so" />
                 </exec>
                 <record name="${project.build.directory}/native-smoke-test.log" action="stop" />
@@ -444,7 +466,7 @@
                     <env key="CFLAGS2" value="-O3 -mavx2 -march=native  -Wno-attributes -fPIC -ffreestanding -fno-stack-check -fno-stack-protector -mno-stack-arg-probe -fno-omit-frame-pointer -Wunused-variable -I${dawnWorkDir}/include" />
                     <env key="LDFLAGS" value="-shared" />
                     <env key="WEBGPU_DLL" value="${dawnWorkDir}/lib/webgpu_dawn.dll" />
-                    <env key="LIB_NAME" value="${nativeLibName}" />
+                   <env key="GPU_LIB_NAME" value="${gpuLibName}" />
                     <env KEY="LIB_EXT"  value="dll" />
                   </exec>
                   <record name="${project.build.directory}/native-build.log" action="stop" />
@@ -469,7 +491,7 @@
                     <env key="OBJ_DIR" value="${nativeObjsOnlyDir}" />
                     <env key="JNI_PLATFORM" value="${jni.platform}" />
                     <env key="CFLAGS" value="-target arm64-apple-macos11 -Rpass-analysis=loop-vectorize -Rpass=loop-vectorize -Rpass-missed=loop-vectorize -O3 -Werror -Wno-attributes -fPIC -fno-omit-frame-pointer -Wunused-variable -fno-common" />
-                    <env key="LIB_NAME" value="${nativeLibName}" />
+                   <env key="GPU_LIB_NAME" value="${gpuLibName}" />
                     <env key="LIB_EXT" value="dylib" />
                     <env key="MACOSX_DEPLOYMENT_TARGET" value="11.0" />
                   </exec>
@@ -556,7 +578,7 @@
                     <env key="CFLAGS2" value="-target arm64-apple-macos11 -mmacosx-version-min=11.0 -Rpass-analysis=loop-vectorize -Rpass=loop-vectorize -Rpass-missed=loop-vectorize -O3 -Werror -Wno-attributes -fPIC -fno-omit-frame-pointer -Wunused-variable -fno-common -I${dawnWorkDir}/include" />
                      <env key="LDFLAGS" value="-isysroot `xcrun -sdk macosx --show-sdk-path` -lSystem -framework Accelerate -dynamiclib -arch arm64" />
                      <env key="LDFLAGS2" value="-isysroot `xcrun -sdk macosx --show-sdk-path` -lSystem -framework Accelerate -dynamiclib -arch arm64 -L${dawnWorkDir}/lib -lwebgpu_dawn" />
-                    <env key="LIB_NAME" value="${nativeLibName}" />
+                   <env key="GPU_LIB_NAME" value="${gpuLibName}" />
                     <env key="LIB_EXT" value="dylib" />
                     <env key="MACOSX_DEPLOYMENT_TARGET" value="11.0" />
                   </exec>
@@ -583,7 +605,7 @@
                     <env key="JNI_PLATFORM" value="${jni.platform}" />
                     <env key="CFLAGS" value="-target arm64-apple-macos11 -mmacosx-version-min=11.0 -Rpass-analysis=loop-vectorize -Rpass=loop-vectorize -Rpass-missed=loop-vectorize -O3 -Werror -Wno-attributes -fPIC -fno-omit-frame-pointer -Wunused-variable -fno-common" />
                     <env key="TEST_LDFLAGS" value="-isysroot `xcrun -sdk macosx --show-sdk-path` -framework Accelerate -arch arm64" />
-                    <env key="LIB_NAME" value="${nativeLibName}" />
+                   <env key="GPU_LIB_NAME" value="${gpuLibName}" />
                     <env key="LIB_EXT" value="dylib" />
                     <env key="MACOSX_DEPLOYMENT_TARGET" value="11.0" />
                   </exec>
@@ -669,7 +691,7 @@
                     <env key="CFLAGS2" value="-target x86_64-apple-macos10.12 -mmacosx-version-min=10.12 -mavx2 -mfma -O3 -Werror -Wno-attributes -fPIC -fno-omit-frame-pointer -Wunused-variable -fno-common -I${dawnWorkDir}/include" />
                      <env key="LDFLAGS" value="-isysroot `xcrun -sdk macosx --show-sdk-path` -lSystem -framework Accelerate -dynamiclib -arch x86_64" />
                      <env key="LDFLAGS2" value="-isysroot `xcrun -sdk macosx --show-sdk-path` -lSystem -framework Accelerate -dynamiclib -arch x86_64 -L${dawnWorkDir}/lib -lwebgpu_dawn" />
-                    <env key="LIB_NAME" value="${nativeLibName}" />
+                     <env key="GPU_LIB_NAME" value="${gpuLibName}" />
                     <env key="LIB_EXT" value="dylib" />
                     <env key="MACOSX_DEPLOYMENT_TARGET" value="10.12" />
                   </exec>

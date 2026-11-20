@@ -7,7 +7,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.LongBuffer;
 
-import io.teknek.reckoning.tensor.operations.util.JarSupport;
+import io.teknek.reckoning.tensor.operations.util.NativeLibraryManager;
 
 /** Owns native WebGPU storage buffers without exposing native types to tensor2. */
 public final class GpuBufferAllocator implements AutoCloseable, io.teknek.reckoning.tensor2.DeviceAllocator {
@@ -22,11 +22,8 @@ public final class GpuBufferAllocator implements AutoCloseable, io.teknek.reckon
         if (initialized) {
             return;
         }
-        if (!JarSupport.maybeLoadLibrary("webgpu_dawn")) {
-            System.loadLibrary("webgpu_dawn");
-        }
-        if (!JarSupport.maybeLoadLibrary("reckoninggpu")) {
-            System.loadLibrary("reckoninggpu");
+        if (!NativeLibraryManager.initialize()) {
+            throw new IllegalStateException("Native runtime unavailable: " + NativeLibraryManager.reason());
         }
         LongBuffer results = ByteBuffer.allocateDirect(Long.BYTES * 3)
                 .order(ByteOrder.LITTLE_ENDIAN)

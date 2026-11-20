@@ -70,18 +70,6 @@
             <version>${dysfx.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.teknek.reckoning</groupId>
-            <artifactId>native</artifactId>
-            <version>${project.version}</version>
-            <classifier>${os.detected.name}-${os.detected.arch}</classifier>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-simple</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
             <version>${guava.version}</version>

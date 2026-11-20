@@ -65,6 +65,7 @@
         <module>safetensors</module>
         <module>core</module>
         <module>native</module>
+        <module>native-all</module>
         <module>sketches-core</module>
         <module>sketches</module>
         <module>web</module>
