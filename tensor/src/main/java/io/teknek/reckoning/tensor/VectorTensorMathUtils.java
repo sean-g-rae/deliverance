@@ -1,8 +1,13 @@
 package io.teknek.reckoning.tensor;
 
+import io.teknek.reckoning.DType;
+import io.teknek.reckoning.tensor2.Lighter;
+import io.teknek.reckoning.tensor2.TensorRef;
 import net.jafama.FastMath;
 
 import java.util.*;
+
+import static io.teknek.reckoning.math.VectorMathUtils.outerProduct;
 
 public class VectorTensorMathUtils {
     public static void l2normalize(AbstractTensor x) {
@@ -68,6 +73,59 @@ public class VectorTensorMathUtils {
         }
         return buckets;
     }
+
+    public static TensorRef precomputeFreqsCis(int dim, int end, double theta, double scaling_factor, Lighter lighter) {
+
+        TensorRef freqs = lighter.allocate(DType.F32, TensorShape.of(dim/2));
+        float step = 0.0f;
+        for (int i = 0; i < freqs.size(); i++, step += 2.0f) {
+            float val = (float) ((1.0 / FastMath.pow(theta, step / dim)) / scaling_factor);
+            freqs.set(val, 0, i);
+        }
+        TensorRef t = lighter.allocate(DType.F32, TensorShape.of(end));
+        for (int i = 0 ; i <t.size(); i++){
+            t.set((float)i,0, i);
+        }
+        TensorRef freqs_cis = outerProduct(t, freqs, lighter);
+        t.close();
+        freqs.close();
+        TensorRef r = lighter.allocate(DType.F32, TensorShape.of((int) freqs_cis.size(), 2));
+        for (int i = 0; i <freqs_cis.size(); i++){
+            r.set((float) FastMath.cos(freqs_cis.get(0, i)),  i, 0);
+            r.set((float) FastMath.sin(freqs_cis.get(0, i)),  i, 1);
+        }
+        return r;
+    }
+
+    public static TensorRef outerProduct(TensorRef xs, TensorRef ys, Lighter lighter){
+        int n = (int) xs.size();
+        int m = (int) ys.size();
+        TensorRef results = lighter.allocate(DType.F32, TensorShape.of(n * m));
+        int idx = 0;
+        for (int i = 0 ; i < n; i++){
+            for (int j =0; j< m; j++){
+                results.set( xs.get(0, i) * ys.get(0, j), 0, idx);
+                idx++;
+            }
+        }
+        return results;
+    }
+
+    /*
+        public static float[] outerProduct(float[] xs, float[] ys) {
+        int n = xs.length;
+        int m = ys.length;
+        float[] result = new float[n * m];
+        int idx = 0;
+        for (float x : xs) {
+            for (float y : ys) {
+                result[idx++] = x * y;
+            }
+        }
+        return result;
+    }
+
+     */
 
     public static void normalize(AbstractTensor t){
         double sum = 0.0;

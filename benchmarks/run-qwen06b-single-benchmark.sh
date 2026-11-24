@@ -9,7 +9,7 @@ else
 fi
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-BENCHMARK_ROOT="$SCRIPT_DIR" BENCHMARK_SCRIPT_NAME="$(basename "$0" .sh)" . "$SCRIPT_DIR/benchmarks/benchmark-run-dir.sh"
+BENCHMARK_ROOT="$SCRIPT_DIR" BENCHMARK_SCRIPT_NAME="${BENCHMARK_SCRIPT_NAME:-$(basename "$0" .sh)}" . "$SCRIPT_DIR/benchmarks/benchmark-run-dir.sh"
 OS_NAME=$(uname -s)
 OS_ARCH=$(uname -m)
 case "$OS_NAME:$OS_ARCH" in

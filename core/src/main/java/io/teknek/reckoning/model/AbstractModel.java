@@ -58,6 +58,7 @@ import io.teknek.reckoning.tensor.kv.KvCacheManager;
 import io.teknek.reckoning.tensor.kv.KvCacheSession;
 import io.teknek.reckoning.tensor.kv.KvPrefixSnapshotCache;
 import io.teknek.reckoning.tensor.impl.Q8ByteBufferTensor;
+import io.teknek.reckoning.tensor.VectorTensorMathUtilsOptimized;
 import io.teknek.reckoning.tensor2.CompositeOps;
 import io.teknek.reckoning.tensor2.Lighter;
 import io.teknek.reckoning.tensor2.ScaledSoftMax;
@@ -209,6 +210,9 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     protected KvBlockManager kvBlockManager;
     protected final Lighter lighter;
     protected final CompositeOps compositeOps;
+    protected TensorRef ropeFrequencies;
+    protected TensorRef ropeInverseFrequencies;
+    private RopeStorageMode ropeStorageMode = RopeStorageMode.FULL_TABLE;
     protected final MetricRegistry metricRegistry;
     private final KvBufferCacheSettings kvBufferCacheSettings;
     protected final TensorParallelContext tensorParallelContext;
@@ -310,6 +314,17 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
             return;
         }
         this.modelLineagePlan = new TensorPlan(pool, metricRegistry, this, lighter);
+        if (config.ropeFreqsTheta != null) {
+            if (ropeStorageMode == RopeStorageMode.ON_DEMAND) {
+                ropeInverseFrequencies = registerModelTensorRef(VectorTensorMathUtilsOptimized
+                        .precomputeInverseFrequencies(config.headSize, config.ropeFreqsTheta,
+                                config.ropeScalingFactor, lighter));
+            } else {
+                ropeFrequencies = registerModelTensorRef(VectorTensorMathUtilsOptimized.precomputeFreqsCis(
+                        config.headSize, config.contextLength, config.ropeFreqsTheta,
+                        config.ropeScalingFactor, lighter));
+            }
+        }
         logger.debug("model init start config={} inference_type={}", config.getClass().getSimpleName(), inferenceType);
         this.embedInput = inferenceType.isInput ? loadInputWeights() : null;
         boolean tensorRefExecution = inferenceType.isFwdPass && usesTensorRefExecution();
@@ -543,12 +558,9 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     }
 
     private String ropeConfigHash() {
-        String sample = config.ropeFreqs.map(freqs -> freqs.length == 0 || freqs[0].length == 0
-                ? "empty"
-                : freqs[0][0] + ":" + freqs[Math.min(freqs.length - 1, 1)][Math.min(freqs[0].length - 1, 1)])
-                .orElse("none");
-        return stableHash("rope", String.valueOf(config.ropeFreqs.isPresent()), String.valueOf(config.contextLength),
-                String.valueOf(config.headSize), sample);
+        return stableHash("rope", String.valueOf(config.ropeFreqsTheta),
+                String.valueOf(config.ropeScalingFactor), String.valueOf(config.contextLength),
+                String.valueOf(config.headSize));
     }
 
     private String attentionConfigHash() {
@@ -616,7 +628,7 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
     }
 
     /**
-     * Optional model-family hook for RoPE variants not represented by {@link Config#ropeFreqs}.
+     * Optional model-family hook for RoPE variants not represented by Config's scalar RoPE parameters.
      *
      * <p>The default returns {@code false}, allowing {@code CausalSelfAttention} to use its existing configured RoPE path.
      * Models with custom RoPE, such as YaRN plus model-specific query scaling, can mutate {@code query} and {@code key}
@@ -1408,6 +1420,36 @@ public abstract class AbstractModel implements Generator, Classifier, TensorPlan
 
     public CompositeOps getCompositeOps() {
         return compositeOps;
+    }
+
+    public void applyRotaryEmbedding(TensorRef target, int heads, int headSize, int startPosition) {
+        if (ropeStorageMode == RopeStorageMode.ON_DEMAND) {
+            if (ropeInverseFrequencies == null) {
+                throw new IllegalStateException("Model does not provide inverse RoPE frequencies");
+            }
+            compositeOps.rotaryEmbeddingOnDemand(target, heads, headSize, startPosition,
+                    ropeInverseFrequencies);
+            return;
+        }
+        if (ropeFrequencies == null) {
+            throw new IllegalStateException("Model does not provide RoPE frequencies");
+        }
+        compositeOps.rotaryEmbedding(target, heads, headSize, startPosition, ropeFrequencies);
+    }
+
+    public TensorRef getRopeFrequencies() {
+        return ropeFrequencies;
+    }
+
+    public TensorRef getRopeInverseFrequencies() {
+        return ropeInverseFrequencies;
+    }
+
+    public void setRopeStorageMode(RopeStorageMode ropeStorageMode) {
+        if (initialized) {
+            throw new IllegalStateException("Rope storage mode must be set before model initialization");
+        }
+        this.ropeStorageMode = Objects.requireNonNull(ropeStorageMode, "ropeStorageMode");
     }
 
     /**

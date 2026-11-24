@@ -92,6 +92,24 @@ class VectorMathUtilsTest {
     }
 
     @Test
+    void precomputeFreqsCisMatchesEveryPositionAndFrequency() {
+        int dim = 6;
+        int end = 4;
+        float[][] actual = VectorMathUtils.precomputeFreqsCis(dim, end, 1234.0, 0.75);
+
+        assertEquals(end * (dim / 2), actual.length);
+        for (int position = 0; position < end; position++) {
+            for (int frequency = 0; frequency < dim / 2; frequency++) {
+                int flat = position * (dim / 2) + frequency;
+                double angle = position
+                        * (1.0 / Math.pow(1234.0, (2.0 * frequency) / dim)) / 0.75;
+                assertEquals((float) Math.cos(angle), actual[flat][0], 1.0e-6f);
+                assertEquals((float) Math.sin(angle), actual[flat][1], 1.0e-6f);
+            }
+        }
+    }
+
+    @Test
     void cosineSimilarityMeasuresDirection() {
         assertEquals(1.0f,
                 VectorMathUtils.cosineSimilarity(new float[]{2.0f, 4.0f}, new float[]{1.0f, 2.0f}),

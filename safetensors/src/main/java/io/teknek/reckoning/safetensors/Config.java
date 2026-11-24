@@ -3,7 +3,6 @@ package io.teknek.reckoning.safetensors;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.ImmutableBiMap;
 import io.teknek.reckoning.math.ActivationFunction;
-import io.teknek.reckoning.math.VectorMathUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -39,7 +38,8 @@ public class Config {
     public final int vocabularySize;
     public final int bosToken;
     public final List<Integer> eosTokens;
-    public final Optional<float[][]> ropeFreqs;
+    public final Double ropeFreqsTheta;
+    public final double ropeScalingFactor;
     public final Optional<BiMap<String, Integer>> classifcationLabels;
     public final List<String> architectures;
     public final boolean isEncoderDecoder;
@@ -357,13 +357,8 @@ public class Config {
         this.activationFunction = activationFunction;
         this.ropeScaling = ropeScaling;
         Object rs = ropeScaling == null ? null: ropeScaling.get("factor");
-        double ropeScalingFactor = rs == null? 1.0 : ((Number) rs).doubleValue();
-
-        this.ropeFreqs = ropeFreqsTheta == null
-                ? Optional.empty()
-                : Optional.of(
-                VectorMathUtils.precomputeFreqsCis(headSize, contextLength, ropeFreqsTheta, ropeScalingFactor)
-        );
+        this.ropeFreqsTheta = ropeFreqsTheta;
+        this.ropeScalingFactor = rs == null ? 1.0 : ((Number) rs).doubleValue();
 
         this.classifcationLabels = classifcationLabels == null ? Optional.empty() : Optional.of(ImmutableBiMap.copyOf(classifcationLabels));
 

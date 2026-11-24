@@ -25,9 +25,7 @@ public final class CausalSelfAttention2 extends KvCacheSelfAttention2 {
 
     @Override
     protected void applyRotaryEmbedding(TensorRef query, TensorRef key, int startPosition) {
-        float[][] frequencies = config.ropeFreqs.orElseThrow(
-                () -> new IllegalStateException("Configuration does not provide RoPE frequencies"));
-        compositeOps.rotaryEmbedding(query, numberOfHeads, headSize, startPosition, frequencies);
-        compositeOps.rotaryEmbedding(key, numberOfKeyValueHeads, headSize, startPosition, frequencies);
+        model.applyRotaryEmbedding(query, numberOfHeads, headSize, startPosition);
+        model.applyRotaryEmbedding(key, numberOfKeyValueHeads, headSize, startPosition);
     }
 }

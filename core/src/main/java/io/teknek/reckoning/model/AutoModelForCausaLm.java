@@ -142,6 +142,7 @@ public class AutoModelForCausaLm {
         private boolean packedPrefill = true;
         private boolean trackKvReadViews;
         private boolean tensorPlanTrace;
+        private RopeStorageMode ropeStorageMode = RopeStorageMode.FULL_TABLE;
         private Map<String, Object> generationOptions = Map.of();
         private final EnumMap<TensorProviderKind, Integer> parallelSplitSizeFixed = new EnumMap<>(TensorProviderKind.class);
         private final EnumMap<TensorProviderKind, Double> parallelSplitSizeMultiplier = new EnumMap<>(TensorProviderKind.class);
@@ -430,6 +431,7 @@ public class AutoModelForCausaLm {
             config.workingQuantType().ifPresent(this::withWorkingQuantType);
             config.outputHeadQuantization().ifPresent(this::withOutputHeadQuantization);
             config.toolCallParser().ifPresent(parser -> withToolCallParser(loadToolCallParser(parser)));
+            config.ropeStorageMode().ifPresent(this::withRopeStorageMode);
             config.gpuPrefill().ifPresent(this::withGpuPrefill);
             config.gpuDecode().ifPresent(this::withGpuDecode);
             config.gpuDecodeAttention().ifPresent(this::withGpuDecodeAttention);
@@ -540,12 +542,18 @@ public class AutoModelForCausaLm {
             copy.packedBlockAttention = this.packedBlockAttention;
             copy.packedPrefill = this.packedPrefill;
             copy.tensorPlanTrace = this.tensorPlanTrace;
+            copy.ropeStorageMode = this.ropeStorageMode;
             copy.generationOptions = this.generationOptions;
             return copy;
         }
         /** This is a JVM wide property! **/
         public Builder withSystemPropertyForVectorOobCheck(String value){
             this.oobCheck = value;
+            return this;
+        }
+
+        public Builder withRopeStorageMode(RopeStorageMode ropeStorageMode) {
+            this.ropeStorageMode = Objects.requireNonNull(ropeStorageMode, "ropeStorageMode");
             return this;
         }
 
@@ -617,6 +625,7 @@ public class AutoModelForCausaLm {
             model.setGenerationOptions(generationOptions);
             model.setGroupedDecodeQkvSplitSize(groupedDecodeQkvSplitSize);
             model.setTensorPlanTraceEnabled(tensorPlanTrace);
+            model.setRopeStorageMode(ropeStorageMode);
             installNativeTensor2Ops(model);
             logBuilderState(model);
             model.init();
